@@ -41,6 +41,15 @@ def load_indices() -> tuple[list[dict], str]:
     return market.get_indices()
 
 
+def highlight_keyword(title: str, keyword: str) -> str:
+    """在标题中高亮命中的关键词（忽略大小写），用于资讯列表。"""
+    if not keyword:
+        return title
+    import re as _re
+
+    return _re.sub(f"(?i)({_re.escape(keyword)})", r"**\1**", title)
+
+
 def build_dataframe(items: list[dict]) -> pd.DataFrame:
     rows = []
     for it in items:
@@ -68,6 +77,7 @@ def main() -> None:
     time_range = st.sidebar.slider(
         "时间范围（最近 N 小时）", min_value=1, max_value=72, value=72, step=1,
     )
+    sort_order = st.sidebar.selectbox("排序方式", ["最新优先", "最旧优先"], index=0)
     force_refresh = st.sidebar.button("🔄 重新抓取")
 
     # ---- 抓取数据（带缓存；点刷新则清空对应缓存后重新拉取） ----
@@ -95,6 +105,11 @@ def main() -> None:
             filtered = filtered[mask]
         if selected_source != "全部":
             filtered = filtered[filtered["来源"] == selected_source]
+        # 排序：最新 / 最旧
+        if sort_order == "最旧优先":
+            filtered = filtered.sort_values("发布时间", ascending=True)
+        else:
+            filtered = filtered.sort_values("发布时间", ascending=False)
 
     # ---- 主区：Tab 切分 ----
     tab_news, tab_market, tab_stock = st.tabs(
@@ -175,7 +190,7 @@ def main() -> None:
             with st.container():
                 left, right = st.columns([0.86, 0.14])
                 with left:
-                    st.markdown(f"**[{row['标题']}]({row['链接']})**")
+                    st.markdown(f"**[{highlight_keyword(row['标题'], keyword)}]({row['链接']})**")
                     st.caption(f"{row['来源']} · {pub_str}")
                 with right:
                     st.markdown(f"{emoji} {row['情绪']}")
