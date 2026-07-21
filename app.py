@@ -97,7 +97,9 @@ def main() -> None:
             filtered = filtered[filtered["来源"] == selected_source]
 
     # ---- 主区：Tab 切分 ----
-    tab_news, tab_market = st.tabs(["📰 资讯看板", "📈 A 股市场"])
+    tab_news, tab_market, tab_stock = st.tabs(
+        ["📰 资讯看板", "📈 A 股市场", "📊 个股查询"]
+    )
 
     # ===================== 资讯看板 =====================
     with tab_news:
@@ -217,6 +219,48 @@ def main() -> None:
             st.download_button("⬇️ 导出指数 CSV", csv_idx, "worldmonitor_indices.csv", "text/csv")
         else:
             st.warning("暂无可展示的指数数据。")
+
+    # ===================== 个股查询 =====================
+    with tab_stock:
+        st.subheader("A 股个股行情（输入代码或名称）")
+        st.caption("例如：600000 / 000001 / 贵州茅台；优先 akshare 实时，离线回退示例")
+        sym = st.text_input("股票代码 / 名称", placeholder="600000")
+        if st.button("查询", type="primary"):
+            if not sym.strip():
+                st.error("请输入股票代码或名称。")
+            else:
+                with st.spinner("查询个股行情..."):
+                    quote, note = market.get_stock_quote(sym.strip())
+                st.info(note)
+                if quote:
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("最新价", quote.get("最新价", 0))
+                    c2.metric(
+                        "涨跌幅", f"{quote.get('涨跌幅', 0):+}%",
+                        delta=f"{quote.get('涨跌额', 0):+}",
+                    )
+                    c3.metric("今开", quote.get("今开", 0))
+                    c4.metric("昨收", quote.get("昨收", 0))
+                    c5, c6 = st.columns(2)
+                    c5.metric("最高", quote.get("最高", 0))
+                    c6.metric("最低", quote.get("最低", 0))
+                    # 当日 OHLC 迷你柱
+                    import pandas as _pd
+
+                    ohlc = _pd.DataFrame([
+                        {"项": "今开", "价": quote.get("今开", 0)},
+                        {"项": "最高", "价": quote.get("最高", 0)},
+                        {"项": "最低", "价": quote.get("最低", 0)},
+                        {"项": "最新价", "价": quote.get("最新价", 0)},
+                    ])
+                    fig_o = _px.bar(
+                        ohlc, x="项", y="价", title="当日 OHLC 概览",
+                        color="项",
+                    )
+                    fig_o.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=300)
+                    st.plotly_chart(fig_o, use_container_width=True)
+                else:
+                    st.warning("未能获取该个股数据。")
 
 
 if __name__ == "__main__":

@@ -105,6 +105,70 @@ def get_indices() -> Tuple[List[Dict], str]:
     return _mock_indices(), "⚠️ akshare 未返回有效数据，已回退内置示例数据（离线模式）"
 
 
+# ---------------------------------------------------------------------------
+# 单只股票行情（akshare 优先 + mock 兜底）
+# ---------------------------------------------------------------------------
+def _mock_stock(symbol: str) -> Dict:
+    """内置示例个股行情（离线兜底）。"""
+    import random
+
+    base = 100.0
+    price = round(base + random.uniform(-10, 20), 2)
+    pct = round(random.uniform(-5, 5), 2)
+    return {
+        "名称": symbol,
+        "代码": symbol,
+        "最新价": price,
+        "涨跌幅": pct,
+        "涨跌额": round(price * pct / 100, 2),
+        "成交量": int(random.uniform(1e5, 5e6)),
+        "成交额": round(random.uniform(1e8, 5e9), 2),
+        "今开": round(price * (1 - random.uniform(0, 0.02)), 2),
+        "昨收": round(price * (1 - pct / 100), 2),
+        "最高": round(price * (1 + random.uniform(0, 0.03)), 2),
+        "最低": round(price * (1 - random.uniform(0, 0.03)), 2),
+    }
+
+
+def get_stock_quote(symbol: str) -> Tuple[Dict, str]:
+    """单只股票行情，akshare 优先，失败回退 mock。
+
+    返回 (个股 dict, 数据来源说明)。symbol 形如 600000 或 sh600000。
+    """
+    symbol = (symbol or "").strip()
+    if not symbol:
+        return {}, "未提供股票代码/名称"
+    try:
+        import akshare as ak
+
+        # 优先用沪 A 实时spot，再退化到全市场筛选
+        df = ak.stock_zh_a_spot_em()
+        code = symbol if symbol.lower().startswith(("sh", "sz", "bj")) else f"sh{symbol}"
+        row = df[df["代码"] == code]
+        if row.empty and not symbol.lower().startswith(("sh", "sz", "bj")):
+            row = df[df["代码"].str.endswith(symbol)]
+        if not row.empty:
+            r = row.iloc[0]
+            return {
+                "名称": str(r.get("名称", symbol)),
+                "代码": str(r.get("代码", code)),
+                "最新价": float(r.get("最新价", 0) or 0),
+                "涨跌幅": float(r.get("涨跌幅", 0) or 0),
+                "涨跌额": float(r.get("涨跌额", 0) or 0),
+                "成交量": float(r.get("成交量", 0) or 0),
+                "成交额": float(r.get("成交额", 0) or 0),
+                "今开": float(r.get("今开", 0) or 0),
+                "昨收": float(r.get("昨收", 0) or 0),
+                "最高": float(r.get("最高", 0) or 0),
+                "最低": float(r.get("最低", 0) or 0),
+            }, "数据来源：akshare（东方财富实时行情）"
+    except Exception as exc:
+        return _mock_stock(symbol), (
+            f"⚠️ 个股行情抓取失败（{type(exc).__name__}），已回退内置示例数据（离线模式）：{symbol}"
+        )
+    return _mock_stock(symbol), f"⚠️ 未匹配到个股，已回退内置示例数据（离线模式）：{symbol}"
+
+
 if __name__ == "__main__":
     idx, msg = get_indices()
     print(msg)
