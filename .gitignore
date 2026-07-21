@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.env
+_cliagent_index.json
+_smoke/
+results.json
+results.csv

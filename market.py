@@ -1,0 +1,112 @@
+"""A 股市场模块（akshare 优先 + mock 兜底）。
+
+主接口：get_indices() -> (list[dict], str)
+  返回 (指数概览列表, 数据来源说明)
+  每条指数结构：
+    {
+      "名称": str,        # 如 "上证指数"
+      "代码": str,        # 如 "sh000001"
+      "最新价": float,
+      "涨跌幅": float,     # 百分比，正为涨
+      "涨跌额": float,
+      "成交量": float,     # 手
+      "成交额": float,     # 元
+    }
+
+离线兜底：akshare 未安装或抓取失败时，返回内置 mock 指数数据，app 不报错。
+"""
+
+from __future__ import annotations
+
+import datetime as _dt
+from typing import Dict, List, Tuple
+
+
+# 常见 A 股指数（用于 mock 与 akshare 过滤）
+TARGET_INDICES = {
+    "上证指数": "sh000001",
+    "深证成指": "sz399001",
+    "创业板指": "sz399006",
+    "沪深300": "sh000300",
+    "科创50": "sh000688",
+}
+
+
+def _mock_indices() -> List[Dict]:
+    """内置示例指数数据（离线兜底）。"""
+    base = {
+        "上证指数": (3120.45, 0.62),
+        "深证成指": (9876.12, -0.34),
+        "创业板指": (1987.63, 1.18),
+        "沪深300": (3654.21, 0.41),
+        "科创50": (876.54, -0.92),
+    }
+    out = []
+    for name, code in TARGET_INDICES.items():
+        price, pct = base.get(name, (1000.0, 0.0))
+        out.append({
+            "名称": name,
+            "代码": code,
+            "最新价": round(price, 2),
+            "涨跌幅": round(pct, 2),
+            "涨跌额": round(price * pct / 100, 2),
+            "成交量": 1_000_000 + int(abs(pct) * 1_000_000),
+            "成交额": round(price * (8_000_000 + abs(pct) * 5_000_000), 2),
+        })
+    return out
+
+
+def _get_via_akshare() -> List[Dict]:
+    """通过 akshare 获取东方财富指数实时行情。"""
+    import akshare as ak  # 延迟导入，缺失时不致命
+    df = ak.stock_zh_index_spot_em()
+    # 列名可能为：代码/名称/最新价/涨跌幅/涨跌额/成交量/成交额 ...
+    wanted = set(TARGET_INDICES.values())
+    out: List[Dict] = []
+    for _, row in df.iterrows():
+        code = str(row.get("代码", ""))
+        if code in wanted:
+            out.append({
+                "名称": str(row.get("名称", "")),
+                "代码": code,
+                "最新价": float(row.get("最新价", 0) or 0),
+                "涨跌幅": float(row.get("涨跌幅", 0) or 0),
+                "涨跌额": float(row.get("涨跌额", 0) or 0),
+                "成交量": float(row.get("成交量", 0) or 0),
+                "成交额": float(row.get("成交额", 0) or 0),
+            })
+    if not out:  # 抓到了但没匹配上，退回全部前若干条
+        for _, row in df.head(5).iterrows():
+            out.append({
+                "名称": str(row.get("名称", "")),
+                "代码": str(row.get("代码", "")),
+                "最新价": float(row.get("最新价", 0) or 0),
+                "涨跌幅": float(row.get("涨跌幅", 0) or 0),
+                "涨跌额": float(row.get("涨跌额", 0) or 0),
+                "成交量": float(row.get("成交量", 0) or 0),
+                "成交额": float(row.get("成交额", 0) or 0),
+            })
+    return out
+
+
+def get_indices() -> Tuple[List[Dict], str]:
+    """获取 A 股主要指数概览，失败回退 mock。
+
+    返回 (指数列表, 数据来源说明)。
+    """
+    try:
+        data = _get_via_akshare()
+        if data:
+            return data, "数据来源：akshare（东方财富实时行情）"
+    except Exception as exc:
+        return _mock_indices(), (
+            f"⚠️ akshare 抓取失败（{type(exc).__name__}），已回退内置示例数据（离线模式）"
+        )
+    return _mock_indices(), "⚠️ akshare 未返回有效数据，已回退内置示例数据（离线模式）"
+
+
+if __name__ == "__main__":
+    idx, msg = get_indices()
+    print(msg)
+    for it in idx:
+        print(f"{it['名称']}: {it['最新价']} ({it['涨跌幅']:+}%)")
