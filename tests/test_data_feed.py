@@ -562,3 +562,36 @@ def test_sort_news_does_not_mutate_input():
     # 入参顺序保持不变
     assert [i["title"] for i in items] == ["a", "b"]
 
+
+def test_top_news_returns_most_recent():
+    now = _dt.datetime.now()
+    items = [
+        {"title": "old", "published": now - _dt.timedelta(hours=3)},
+        {"title": "new", "published": now},
+        {"title": "mid", "published": now - _dt.timedelta(hours=1)},
+    ]
+    out = data_feed.top_news(items, n=2)
+    assert [i["title"] for i in out] == ["new", "mid"]
+
+
+def test_top_news_sentiment_filter():
+    items = [
+        {"title": "pos", "summary": "突破 增长"},
+        {"title": "neg", "summary": "亏损 下跌"},
+        {"title": "pos2", "summary": "发布 创新"},
+    ]
+    out = data_feed.top_news(items, n=5, sentiment="正面")
+    assert len(out) == 2
+    assert all(data_feed.classify_sentiment(i["title"] + " " + i["summary"]) == "正面" for i in out)
+
+
+def test_top_news_does_not_mutate_input():
+    now = _dt.datetime.now()
+    items = [
+        {"title": "a", "published": now - _dt.timedelta(hours=1)},
+        {"title": "b", "published": now},
+    ]
+    data_feed.top_news(items, n=1)
+    assert [i["title"] for i in items] == ["a", "b"]
+
+

@@ -413,6 +413,26 @@ def sort_news(news: List[Dict], order: str = "desc") -> List[Dict]:
     return sorted(news, key=_key, reverse=reverse)
 
 
+def top_news(news: List[Dict], n: int = 5, sentiment: "str | None" = None) -> List[Dict]:
+    """返回最近 N 条资讯（按发布时间倒序），可选按情绪过滤。
+
+    R1 新能力：为看板「最新 N 条」头部组件 / 摘要区提供统一便捷入口，
+    避免各处重复做「过滤 + 排序 + 截断」三连（此前 app 里时间排序依赖
+    pandas，纯后端场景需自己再写一遍）。
+
+    R2 一致性：直接复用上方 sort_news 纯函数做时间排序，避免再内联一次
+    `sorted(...)`，造成「缺 published 处理 / 带时区规整」口径与 sort_news
+    漂移（c96 已统一该口径）。
+    """
+    out = news
+    if sentiment:
+        out = filter_news_by_sentiment(out, sentiment)
+    out = sort_news(out, "desc")
+    if n and n > 0:
+        out = out[:n]
+    return out
+
+
 def filter_news_by_source(news: List[Dict], source: "str | None") -> List[Dict]:
     """按来源名称子串过滤资讯（与 filter_news_by_sentiment 对称的公开 API）。
 
