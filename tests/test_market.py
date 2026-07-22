@@ -82,3 +82,30 @@ def test_market_overview_structure(no_akshare):
     assert "indices" in ov and "up" in ov and "down" in ov and "flat" in ov
     assert ov["up"] + ov["down"] + ov["flat"] == len(ov["indices"])
     assert "source" in ov
+
+
+def test_get_indices_sorted_descending(no_akshare):
+    """R2 隐性展示优化：指数应按涨跌幅降序（领涨在前）。"""
+    market.clear_market_cache()
+    indices, _ = market.get_indices()
+    pcts = [i["涨跌幅"] for i in indices]
+    assert pcts == sorted(pcts, reverse=True)
+
+
+def test_get_indices_limit(no_akshare):
+    """R1 新需求对齐：get_indices 支持 limit 截娶前 N 条。"""
+    market.clear_market_cache()
+    limited, _ = market.get_indices(limit=2)
+    assert len(limited) == 2
+    full, _ = market.get_indices(limit=None)
+    assert len(full) >= 2
+
+
+def test_get_stock_quotes_batch(no_akshare):
+    """R1 新需求：批量行情查询，返回 {symbol: (quote, source)}。"""
+    market.clear_market_cache()
+    out = market.get_stock_quotes(["600000", "000001"])
+    assert set(out.keys()) == {"600000", "000001"}
+    for sym, (quote, note) in out.items():
+        assert quote["代码"] == sym
+        assert isinstance(note, str)

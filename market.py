@@ -114,29 +114,43 @@ def _get_via_akshare() -> List[Dict]:
     return out
 
 
-def get_indices() -> Tuple[List[Dict], str]:
+def get_indices(limit: "int | None" = None) -> Tuple[List[Dict], str]:
     """获取 A 股主要指数概览，失败回退 mock。
 
-    返回 (指数列表, 数据来源说明)。
+    返回 (指数列表, 数据来源说明)。列表按涨跌幅降序排列（领涨在前），
+    limit 可截取前 N 条（None 表示不限，与 get_news 对齐）。
     """
     cached = _cache_get("indices")
     if cached is not None:
-        return cached
+        data, note = cached
+        if limit is None or limit < 0:
+            return data, note
+        return data[:limit], note
     try:
         data = _get_via_akshare()
         if data:
             result = (data, "数据来源：akshare（东方财富实时行情）")
             _cache_set("indices", result)
-            return result
+            data = sorted(data, key=lambda x: x.get("涨跌幅", 0), reverse=True)
+            if limit is not None and limit >= 0:
+                data = data[:limit]
+            return data, result[1]
     except Exception as exc:
         result = _mock_indices(), (
             f"⚠️ akshare 抓取失败（{type(exc).__name__}），已回退内置示例数据（离线模式）"
         )
         _cache_set("indices", result)
-        return result
-    result = _mock_indices(), "⚠️ akshare 未返回有效数据，已回退内置示例数据（离线模式）"
+        data = sorted(result[0], key=lambda x: x.get("涨跌幅", 0), reverse=True)
+        if limit is not None and limit >= 0:
+            data = data[:limit]
+        return data, result[1]
+    raw = _mock_indices()
+    result = raw, "⚠️ akshare 未返回有效数据，已回退内置示例数据（离线模式）"
     _cache_set("indices", result)
-    return result
+    data = sorted(raw, key=lambda x: x.get("涨跌幅", 0), reverse=True)
+    if limit is not None and limit >= 0:
+        data = data[:limit]
+    return data, result[1]
 
 
 def get_market_overview() -> Dict:
@@ -228,6 +242,17 @@ def get_stock_quote(symbol: str) -> Tuple[Dict, str]:
     result = _mock_stock(symbol), f"⚠️ 未匹配到个股，已回退内置示例数据（离线模式）：{symbol}"
     _cache_set(cache_key, result)
     return result
+
+
+def get_stock_quotes(symbols: List[str]) -> Dict[str, Tuple[Dict, str]]:
+    """批量查询多只股票行情（自选/看板场景）。
+
+    返回 {symbol: (个股 dict, 数据来源说明)}，逐只复用 get_stock_quote 的缓存与兜底。
+    """
+    out: Dict[str, Tuple[Dict, str]] = {}
+    for sym in symbols:
+        out[sym] = get_stock_quote(sym)
+    return out
 
 
 if __name__ == "__main__":
