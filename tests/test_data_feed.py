@@ -69,3 +69,42 @@ def test_group_by_sentiment_sums_to_total():
     assert total == len(news)
     # 每个分组键都应有定义
     assert set(groups.keys()) == {"正面", "负面", "中性"}
+
+
+def _force_mock(monkeypatch):
+    """让所有网络抓取抛错，从而强制走内置 mock 分支（无网络依赖）。"""
+    def _boom(*a, **k):
+        raise RuntimeError("offline")
+    monkeypatch.setattr(data_feed, "fetch_hacker_news", _boom)
+    monkeypatch.setattr(data_feed, "fetch_rss", _boom)
+
+
+def test_get_news_limit_truncates(monkeypatch):
+    """R1 新需求：limit 应按时序截取前 N 条。"""
+    _force_mock(monkeypatch)
+    data_feed.clear_news_cache()
+    items, _ = data_feed.get_news(limit=3)
+    assert len(items) == 3
+    # 默认（不限）应多于 limit
+    all_items, _ = data_feed.get_news(limit=None)
+    assert len(all_items) >= 3
+
+
+def test_get_news_caches_and_clear(monkeypatch):
+    """R2 隐性性能/一致性：模块级 TTL 缓存应复用结果；clear 后重新拉取。"""
+    _force_mock(monkeypatch)
+    calls = {"n": 0}
+    orig = data_feed._mock_news
+
+    def spy():
+        calls["n"] += 1
+        return orig()
+
+    monkeypatch.setattr(data_feed, "_mock_news", spy)
+    data_feed.clear_news_cache()
+    data_feed.get_news()
+    data_feed.get_news()  # 命中缓存，不应再次抓取
+    assert calls["n"] == 1
+    data_feed.clear_news_cache()
+    data_feed.get_news()
+    assert calls["n"] == 2

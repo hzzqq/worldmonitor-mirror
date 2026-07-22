@@ -20,6 +20,8 @@
 from __future__ import annotations
 
 import datetime as _dt
+import os
+import time
 from typing import Dict, List, Tuple
 
 import requests
@@ -212,13 +214,48 @@ def _mock_news() -> List[Dict]:
 
 
 # ---------------------------------------------------------------------------
+# 轻量 TTL 缓存（与 market 模块一致，避免重复网络抓取 / 刷新语义模糊）
+# ---------------------------------------------------------------------------
+_NEWS_CACHE_TTL = float(os.getenv("NEWS_CACHE_TTL", "30"))
+_NEWS_CACHE: Dict[str, Tuple[object, float]] = {}
+
+
+def _news_cache_get(key: str):
+    item = _NEWS_CACHE.get(key)
+    if item and (time.time() - item[1]) < _NEWS_CACHE_TTL:
+        return item[0]
+    return None
+
+
+def _news_cache_set(key: str, value) -> None:
+    _NEWS_CACHE[key] = (value, time.time())
+
+
+def clear_news_cache() -> None:
+    """清空资讯缓存（便于测试与手动刷新，与 market.clear_market_cache 对齐）。"""
+    _NEWS_CACHE.clear()
+
+
+# ---------------------------------------------------------------------------
 # 聚合主接口
 # ---------------------------------------------------------------------------
-def get_news(force_refresh: bool = False) -> Tuple[List[Dict], str]:
+def get_news(force_refresh: bool = False, limit: "int | None" = None) -> Tuple[List[Dict], str]:
     """聚合多源资讯，网络失败时回退 mock。
 
     返回 (资讯列表, 来源说明文本)。来源说明用于 UI 友好提示。
+
+    force_refresh：忽略缓存强制重新拉取。
+    limit：返回条数上限（按时间倒序截取前 N 条），None 表示不限。
     """
+    cache_key = "news"
+    if not force_refresh:
+        cached = _news_cache_get(cache_key)
+        if cached is not None:
+            collected, notes = cached
+            if limit is None or limit < 0:
+                return collected, notes
+            return collected[:limit], notes
+
     collected: List[Dict] = []
     notes: List[str] = []
 
@@ -251,7 +288,12 @@ def get_news(force_refresh: bool = False) -> Tuple[List[Dict], str]:
     # 按时间倒序
     collected = _dedup_news(collected)
     collected.sort(key=lambda x: x.get("published") or _dt.datetime.min, reverse=True)
-    return collected, "；".join(notes)
+
+    notes_str = "；".join(notes)
+    _news_cache_set(cache_key, (collected, notes_str))
+    if limit is not None and limit >= 0:
+        collected = collected[:limit]
+    return collected, notes_str
 
 
 if __name__ == "__main__":

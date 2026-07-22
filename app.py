@@ -85,6 +85,7 @@ def main() -> None:
         load_news.clear()
         load_indices.clear()
         market.clear_market_cache()  # 清内部 TTL 缓存，否则 30s 内仍是旧数据
+        data_feed.clear_news_cache()  # 资讯模块级缓存同步清空，刷新才真正生效
     with st.spinner("正在聚合资讯..."):
         news_items, news_note = load_news()
 
