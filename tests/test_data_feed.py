@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+import datetime as _dt
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -254,3 +255,52 @@ def test_sentiment_cjk_substring_still_works():
     """R2：中文词仍走子串匹配（多字词误命中概率低，保持原有行为）。"""
     assert data_feed.classify_sentiment("公司宣布开源新框架") == "正面"
     assert data_feed.classify_sentiment("股价暴跌引发担忧") == "负面"
+
+
+def test_filter_news_by_time_keeps_recent_drops_old():
+    import datetime as dt
+
+    now = dt.datetime.now()
+    news = [
+        {"title": "近 1 小时", "published": now - dt.timedelta(hours=1), "link": "1"},
+        {"title": "近 3 小时", "published": now - dt.timedelta(hours=3), "link": "2"},
+        {"title": "10 小时前", "published": now - dt.timedelta(hours=10), "link": "3"},
+    ]
+    recent = data_feed.filter_news_by_time(news, hours=5)
+    assert [n["link"] for n in recent] == ["1", "2"]
+
+
+def test_filter_news_by_time_zero_returns_all():
+    news = [
+        {"title": "a", "published": _dt.datetime(2000, 1, 1), "link": "1"},
+        {"title": "b", "published": _dt.datetime(2000, 1, 1), "link": "2"},
+    ]
+    assert data_feed.filter_news_by_time(news, hours=0) == news
+    assert data_feed.filter_news_by_time(news, hours=None) == news
+
+
+def test_filter_news_by_time_keeps_items_without_datetime():
+    """缺 published 的条目应保守保留，而非被时间淘汰误删。"""
+    import datetime as dt
+
+    now = dt.datetime.now()
+    news = [
+        {"title": "有时间的近期", "published": now - dt.timedelta(hours=1), "link": "1"},
+        {"title": "无时间信息", "link": "2"},
+    ]
+    recent = data_feed.filter_news_by_time(news, hours=2)
+    assert {n["link"] for n in recent} == {"1", "2"}
+
+
+def test_filter_news_by_time_tolerates_aware_datetime():
+    """带时区的 published 不应抛 TypeError（naive/aware 比较）。"""
+    import datetime as dt
+
+    now = dt.datetime.now()
+    aware = (now - dt.timedelta(hours=1)).replace(tzinfo=dt.timezone.utc)
+    news = [
+        {"title": "aware 近期", "published": aware, "link": "1"},
+        {"title": "古老", "published": now - dt.timedelta(hours=100), "link": "2"},
+    ]
+    recent = data_feed.filter_news_by_time(news, hours=5)
+    assert [n["link"] for n in recent] == ["1"]

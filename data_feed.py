@@ -156,6 +156,37 @@ def filter_news_by_sentiment(news: List[Dict], sentiment: str) -> List[Dict]:
     return out
 
 
+def filter_news_by_time(news: List[Dict], hours: "int | float | None" = None) -> List[Dict]:
+    """按时间窗口过滤资讯（保留最近 N 小时内的条目）。
+
+    R1 新能力：把「时间范围」这一常用筛选从 UI 的 pandas 逻辑里抽离成
+    纯函数，便于后端 API / 检索叠加复用，也更容易单测。
+
+    - hours <= 0 或为空时原样返回全部（不做时间淘汰）；
+    - published 非 datetime（缺时间信息）的条目保守保留，避免被误删；
+    - 兼容带时区的 published（统一按 tzinfo=None 处理，与 get_news 返回
+      的 naive datetime 对齐），杜绝 naive/aware 比较抛 TypeError。
+    """
+    if not hours or hours <= 0:
+        return list(news)
+    now = _dt.datetime.now()
+    cutoff = now - _dt.timedelta(hours=hours)
+    out: List[Dict] = []
+    for n in news:
+        pub = n.get("published")
+        if not isinstance(pub, _dt.datetime):
+            out.append(n)  # 无时间信息：保守保留
+            continue
+        try:
+            if getattr(pub, "tzinfo", None) is not None:
+                pub = pub.replace(tzinfo=None)
+        except Exception:
+            pass
+        if pub >= cutoff:
+            out.append(n)
+    return out
+
+
 def export_news_csv(news: List[Dict]) -> str:
     """把资讯列表序列化为 CSV 文本（含表头），用于导出 / 下载。
 

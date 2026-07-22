@@ -316,7 +316,7 @@ def main() -> None:
                         {"项": "最低", "价": quote.get("最低", 0)},
                         {"项": "最新价", "价": quote.get("最新价", 0)},
                     ])
-                    fig_o = _px.bar(
+                    fig_o = px.bar(
                         ohlc, x="项", y="价", title="当日 OHLC 概览",
                         color="项",
                     )
