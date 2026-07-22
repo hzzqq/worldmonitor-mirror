@@ -84,6 +84,7 @@ def main() -> None:
     if force_refresh:
         load_news.clear()
         load_indices.clear()
+        market.clear_market_cache()  # 清内部 TTL 缓存，否则 30s 内仍是旧数据
     with st.spinner("正在聚合资讯..."):
         news_items, news_note = load_news()
 
@@ -202,6 +203,13 @@ def main() -> None:
         with st.spinner("加载指数行情..."):
             indices, idx_note = load_indices()
         st.info(idx_note)
+
+        # 涨跌平概览（来自 get_market_overview，便于一眼看多空）
+        ov = market.get_market_overview()
+        oc1, oc2, oc3 = st.columns(3)
+        oc1.metric("上涨", ov["up"], help="涨跌幅 > 0 的指数数")
+        oc2.metric("下跌", ov["down"], help="涨跌幅 < 0 的指数数")
+        oc3.metric("平盘", ov["flat"], help="涨跌幅 = 0 的指数数")
 
         idf = pd.DataFrame(indices)
         if not idf.empty:
