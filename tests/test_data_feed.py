@@ -209,6 +209,32 @@ def test_search_news_source_filter():
     res = data_feed.search_news("开源", news, source="科技")
     assert [n["link"] for n in res] == ["1"]
 
+
+def test_search_news_word_boundary_no_substring_fp():
+    """R2 修复验证：英文词按单词边界匹配，'cat' 不得命中 'category'。"""
+    news = [
+        {"title": "category theory explained", "summary": "", "source": "s", "link": "1"},
+        {"title": "open source rocks", "summary": "", "source": "s", "link": "2"},
+    ]
+    assert data_feed.search_news("cat", news) == []   # 边界：不命中 category
+    assert len(data_feed.search_news("open", news)) == 1  # 边界：命中 open source
+    assert data_feed.search_news("open", news)[0]["link"] == "2"
+
+
+def test_filter_news_by_sentiment():
+    """R1 新需求验证：filter_news_by_sentiment 只保留指定情绪。"""
+    news = [
+        {"title": "开源实现突破", "summary": "创新增长", "source": "s", "link": "1"},
+        {"title": "系统遭攻击", "summary": "风险漏洞", "source": "s", "link": "2"},
+        {"title": "中性公告", "summary": "今日例行维护", "source": "s", "link": "3"},
+    ]
+    neg = data_feed.filter_news_by_sentiment(news, "负面")
+    assert [n["link"] for n in neg] == ["2"]
+    pos = data_feed.filter_news_by_sentiment(news, "正面")
+    assert [n["link"] for n in pos] == ["1"]
+    # 空/非法情绪：原样返回
+    assert data_feed.filter_news_by_sentiment(news, "") == news
+
 def test_sentiment_word_boundary_no_false_positive():
     """R2 隐性正确性：英文词子串误命中（win→window, down→download）必须杜绝。
 

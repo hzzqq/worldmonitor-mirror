@@ -77,6 +77,18 @@ def _sentiment_word_hits(word: str, low_text: str) -> bool:
     return re.search(rf"(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])", low_text) is not None
 
 
+def _word_match(query: str, text: str) -> bool:
+    """单词边界感知匹配（与 _sentiment_word_hits 同一套规则）。
+
+    中文（含 CJK）用子串；英文词用单词边界，避免 'cat' 误命中
+    'category'、'in' 误命中 'include' 等子串假阳性。
+    """
+    q = query.lower()
+    if re.search(r"[一-鿿]", q):
+        return q in text
+    return re.search(rf"(?<![a-z0-9]){re.escape(q)}(?![a-z0-9])", text) is not None
+
+
 def classify_sentiment(text: str) -> str:
     """基于关键词命中判断情绪：正面 / 负面 / 中性。
 
@@ -125,6 +137,23 @@ def group_by_sentiment(news: List[Dict]) -> Dict[str, List[Dict]]:
         s = classify_sentiment(text)
         groups.setdefault(s, groups["中性"]).append(n)
     return groups
+
+
+def filter_news_by_sentiment(news: List[Dict], sentiment: str) -> List[Dict]:
+    """按情绪标签过滤资讯（正面 / 负面 / 中性）。
+
+    R1 新能力：为看板提供「只看某类情绪」的入口（如只看负面以
+    快速识别风险资讯）。sentiment 为空 / None / 非法时原样返回。
+    """
+    if not sentiment:
+        return list(news)
+    want = sentiment.strip()
+    out: List[Dict] = []
+    for n in news:
+        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        if classify_sentiment(text) == want:
+            out.append(n)
+    return out
 
 
 def export_news_csv(news: List[Dict]) -> str:
@@ -399,7 +428,9 @@ def search_news(query: str, news: "List[Dict] | None" = None,
     scored: List[Tuple[int, Dict]] = []
     for n in news:
         text = f"{n.get('title', '')} {n.get('summary', '')}".lower()
-        if q in text and (source is None or source.lower() in (n.get("source") or "").lower()):
+        # R2 修复：原实现用朴素子串 `q in text`，导致 'cat' 误命中
+        # 'category'、'in' 误命中 'include' 等假阳性；改用单词边界匹配。
+        if _word_match(q, text) and (source is None or source.lower() in (n.get("source") or "").lower()):
             scored.append((text.count(q), n))
     scored.sort(key=lambda x: x[0], reverse=True)
     return [n for _, n in scored]
