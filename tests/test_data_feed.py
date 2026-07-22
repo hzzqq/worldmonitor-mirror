@@ -402,3 +402,49 @@ def test_paginate_news_clamps_invalid_args():
     r_over = data_feed.paginate_news(news, page=99, page_size=2)
     assert r_over["page"] == r_over["pages"]
     assert len(r_over["items"]) > 0
+
+
+def test_filter_news_by_source_public():
+    """R1：公开 filter_news_by_source 按来源子串过滤。"""
+    news = [
+        {"title": "A", "link": "1", "source": "Hacker News", "summary": ""},
+        {"title": "B", "link": "2", "source": "示例·科技前线", "summary": ""},
+        {"title": "C", "link": "3", "source": "Hacker News", "summary": ""},
+    ]
+    out = data_feed.filter_news_by_source(news, "hacker")
+    assert len(out) == 2
+    assert all(n["source"] == "Hacker News" for n in out)
+    # 空 source 原样返回
+    assert data_feed.filter_news_by_source(news, None) == news
+
+
+def test_get_news_sentiment_filter_offline(monkeypatch):
+    """R1：get_news(sentiment=) 在聚合层按情绪过滤，且全部为指定情绪。
+
+    强制走 mock 兜底（离线），保证结果确定（mock 数据含 6 正面 / 4 负面）。
+    """
+    def _offline(*a, **k):
+        raise RuntimeError("offline-test")
+    monkeypatch.setattr(data_feed, "fetch_hacker_news", _offline)
+    monkeypatch.setattr(data_feed, "fetch_rss", _offline)
+    data_feed.clear_news_cache()
+
+    pos, _ = data_feed.get_news(force_refresh=True, sentiment="正面")
+    assert len(pos) == 6
+    assert all(data_feed.classify_sentiment(f"{n['title']} {n['summary']}") == "正面" for n in pos)
+
+    neg, _ = data_feed.get_news(force_refresh=True, sentiment="负面")
+    assert len(neg) == 4
+    assert all(data_feed.classify_sentiment(f"{n['title']} {n['summary']}") == "负面" for n in neg)
+
+
+def test_get_news_sentiment_before_limit(monkeypatch):
+    """R2 一致性：情绪过滤在 limit 截断之前应用，先筛后截。"""
+    def _offline(*a, **k):
+        raise RuntimeError("offline-test")
+    monkeypatch.setattr(data_feed, "fetch_hacker_news", _offline)
+    monkeypatch.setattr(data_feed, "fetch_rss", _offline)
+    data_feed.clear_news_cache()
+    out, _ = data_feed.get_news(force_refresh=True, sentiment="正面", limit=2)
+    assert len(out) == 2
+    assert all(data_feed.classify_sentiment(f"{n['title']} {n['summary']}") == "正面" for n in out)

@@ -343,8 +343,37 @@ def clear_news_cache() -> None:
 # ---------------------------------------------------------------------------
 # 聚合主接口
 # ---------------------------------------------------------------------------
+def filter_news_by_source(news: List[Dict], source: "str | None") -> List[Dict]:
+    """按来源名称子串过滤资讯（与 filter_news_by_sentiment 对称的公开 API）。
+
+    R1 新能力：此前来源过滤只有私有 `_filter_by_source`，调用方（如看板后端
+    / 检索叠加）想对已取得列表做纯函数式来源筛选时只能依赖私有实现。
+    这里暴露为公开函数，便于在 app 之外复用，且语义与 `_filter_by_source` 一致。
+    source 为空 / None 时原样返回。
+    """
+    return _filter_by_source(news, source)
+
+
+def _apply_news_filters(news: List[Dict], source: "str | None" = None,
+                        sentiment: "str | None" = None) -> List[Dict]:
+    """对资讯列表统一应用「来源 + 情绪」过滤（R1 新能力 + R2 一致性修复）。
+
+    R2 修复（隐性一致性缺陷）：此前来源过滤在 get_news 两处分支里各自内联，
+    且情绪过滤从未接入聚合层——调用方若想「按来源 + 情绪」组合筛选，只能
+    自行在 get_news 返回后再调 filter_news_by_sentiment，既重复又容易在
+    limit 截断顺序上不一致（先截还是先筛结果不同）。现抽出统一入口，保证
+    两种过滤均在 limit 截断之前按「来源 → 情绪」顺序应用，缓存命中与全新
+    抓取两条路径行为完全一致。
+    """
+    news = _filter_by_source(news, source)
+    if sentiment:
+        news = filter_news_by_sentiment(news, sentiment.strip())
+    return news
+
+
 def get_news(force_refresh: bool = False, limit: "int | None" = None,
-             source: "str | None" = None) -> Tuple[List[Dict], str]:
+             source: "str | None" = None,
+             sentiment: "str | None" = None) -> Tuple[List[Dict], str]:
     """聚合多源资讯，网络失败时回退 mock。
 
     返回 (资讯列表, 来源说明文本)。来源说明用于 UI 友好提示。
@@ -361,7 +390,8 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
             # R2 修复（隐性别名/可变性缺陷）：此前直接把缓存里的列表对象返回，
             # 调用方若对返回列表做 in-place 修改（如 sort / pop / 覆盖元素）会
             # 污染缓存，导致后续命中缓存的请求拿到被篡改的数据。现返回独立副本。
-            collected = _filter_by_source(collected, source)
+            # R1 统一过滤：来源 + 情绪均在 limit 截断前应用（缓存命中路径）。
+            collected = _apply_news_filters(collected, source, sentiment)
             if limit is None or limit < 0:
                 return list(collected), notes
             return list(collected[:limit]), notes
@@ -402,7 +432,8 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
     notes_str = "；".join(notes)
     # 缓存独立副本，避免后续对返回值的修改反向污染缓存
     _news_cache_set(cache_key, (list(collected), notes_str))
-    collected = _filter_by_source(collected, source)
+    # R1 统一过滤：来源 + 情绪均在 limit 截断前应用（全新抓取路径）。
+    collected = _apply_news_filters(collected, source, sentiment)
     if limit is not None and limit >= 0:
         collected = collected[:limit]
     return list(collected), notes_str
