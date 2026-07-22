@@ -300,6 +300,25 @@ def get_index_quote(query: str):
     return None
 
 
+def search_indices(query: str) -> "list[dict]":
+    """按名称或代码模糊检索指数行情（看板「指数搜索/联想」入口，R1 新能力）。
+
+    与 get_index_quote（精确单条）互补：返回所有 名称/代码 包含 query 的
+    指数（大小写不敏感），便于前端做下拉联想与多匹配展示。空查询返回全部。
+    复用 get_indices()（带缓存、离线走 mock），不额外打上游。
+    """
+    query = (query or "").strip()
+    indices, _ = get_indices()
+    if not query:
+        return list(indices)
+    q = query.lower()
+    return [
+        it for it in indices
+        if q in str(it.get("名称", "")).lower()
+        or q in str(it.get("代码", "")).lower()
+    ]
+
+
 if __name__ == "__main__":
     idx, msg = get_indices()
     print(msg)

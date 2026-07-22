@@ -168,3 +168,29 @@ def test_get_top_movers(no_akshare):
     # 领涨第一 不得出现在领跌里（无交集）
     g0 = gainers[0]["代码"]
     assert all(l["代码"] != g0 for l in losers)
+
+
+def test_search_indices_fuzzy_match(no_akshare):
+    """R1 新能力验证：search_indices 按名称/代码模糊匹配（大小写不敏感）。"""
+    market.clear_market_cache()
+    res = market.search_indices("上证")
+    assert any(it["名称"] == "上证指数" for it in res)
+    # 代码子串匹配（如 000001 命中 sh000001）
+    res2 = market.search_indices("000001")
+    assert any(it["代码"] == "sh000001" for it in res2)
+    # 大小写不敏感
+    res3 = market.search_indices("SH")
+    assert len(res3) >= 1
+
+
+def test_search_indices_empty_returns_all(no_akshare):
+    """search_indices 空查询返回全部指数（与 get_indices 数量一致）。"""
+    market.clear_market_cache()
+    all_idx, _ = market.get_indices()
+    assert len(market.search_indices("")) == len(all_idx)
+
+
+def test_search_indices_no_match_returns_empty(no_akshare):
+    """search_indices 无匹配时返回空列表（不抛异常）。"""
+    market.clear_market_cache()
+    assert market.search_indices("不存在的指数zzz") == []
