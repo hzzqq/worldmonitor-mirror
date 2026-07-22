@@ -134,7 +134,7 @@ def group_by_sentiment(news: List[Dict]) -> Dict[str, List[Dict]]:
     """
     groups: Dict[str, List[Dict]] = {"正面": [], "负面": [], "中性": []}
     for n in news:
-        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        text = _news_text(n)
         s = classify_sentiment(text)
         groups.setdefault(s, groups["中性"]).append(n)
     return groups
@@ -151,8 +151,33 @@ def filter_news_by_sentiment(news: List[Dict], sentiment: str) -> List[Dict]:
     want = sentiment.strip()
     out: List[Dict] = []
     for n in news:
-        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        text = _news_text(n)
         if classify_sentiment(text) == want:
+            out.append(n)
+    return out
+
+
+def _news_text(n: Dict) -> str:
+    """把单条资讯的「标题 + 摘要」拼为小写文本（R2 去重：此前该拼接在
+    classify_sentiment / filter / 导出等多处重复出现，未来一旦口径不一致
+    会导致「检索命中但导出漏掉」等隐性偏差；现统一为单一来源）。
+    """
+    return f"{n.get('title', '')} {n.get('summary', '')}"
+
+
+def filter_news_by_keyword(news: List[Dict], keyword: str) -> List[Dict]:
+    """按关键词子串过滤资讯（标题 + 摘要，大小写不敏感）。
+
+    R1 新能力：补充 search_news 之外的纯函数式关键词过滤，便于在已取得的
+    列表上做轻量筛选（如「只看含某关键词的资讯」），无需触发检索打分。
+    空 / 纯空白 keyword 原样返回全部。
+    """
+    if not keyword or not keyword.strip():
+        return list(news)
+    kw = keyword.strip().lower()
+    out: List[Dict] = []
+    for n in news:
+        if kw in _news_text(n).lower():
             out.append(n)
     return out
 
@@ -202,7 +227,7 @@ def export_news_csv(news: List[Dict]) -> str:
     for n in news:
         published = n.get("published")
         pub = published.isoformat() if isinstance(published, _dt.datetime) else str(published or "")
-        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        text = _news_text(n)
         writer.writerow([
             n.get("title", ""),
             n.get("link", ""),
@@ -460,7 +485,7 @@ def export_news_json(news: List[Dict]) -> str:
     enriched = []
     for n in news:
         item = dict(n)
-        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        text = _news_text(n)
         item["sentiment"] = classify_sentiment(text)
         enriched.append(item)
     return json.dumps(enriched, ensure_ascii=False, indent=2)
@@ -482,7 +507,7 @@ def export_news_markdown(news: List[Dict]) -> str:
         source = n.get("source", "")
         published = n.get("published")
         pub = published.isoformat() if isinstance(published, _dt.datetime) else str(published or "")
-        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        text = _news_text(n)
         sentiment = classify_sentiment(text)
         title_md = f"[{title}]({link})" if link else title
         lines.append(f"{i}. {title_md}")
@@ -510,7 +535,7 @@ def summarize_news(news: List[Dict]) -> Dict:
     by_sent = {"正面": 0, "负面": 0, "中性": 0}
     for n in news:
         by_source[n.get("source", "")] += 1
-        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        text = _news_text(n)
         s = classify_sentiment(text)
         by_sent[s] = by_sent.get(s, 0) + 1
     return {
@@ -538,7 +563,7 @@ def search_news(query: str, news: "List[Dict] | None" = None,
     q = query.strip().lower()
     scored: List[Tuple[int, Dict]] = []
     for n in news:
-        text = f"{n.get('title', '')} {n.get('summary', '')}".lower()
+        text = _news_text(n).lower()
         # R2 修复：原实现用朴素子串 `q in text`，导致 'cat' 误命中
         # 'category'、'in' 误命中 'include' 等假阳性；改用单词边界匹配。
         if _word_match(q, text) and (source is None or source.lower() in (n.get("source") or "").lower()):

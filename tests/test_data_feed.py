@@ -448,3 +448,25 @@ def test_get_news_sentiment_before_limit(monkeypatch):
     out, _ = data_feed.get_news(force_refresh=True, sentiment="正面", limit=2)
     assert len(out) == 2
     assert all(data_feed.classify_sentiment(f"{n['title']} {n['summary']}") == "正面" for n in out)
+
+
+def test_filter_news_by_keyword():
+    """R1：filter_news_by_keyword 按关键词子串(大小写不敏感)过滤标题+摘要。"""
+    news = [
+        {"title": "苹果发布新品", "link": "1", "source": "x", "summary": "科技"},
+        {"title": "天气晴朗", "link": "2", "source": "y", "summary": "生活"},
+        {"title": "Orange 上市", "link": "3", "source": "z", "summary": "Apple 合作"},
+    ]
+    out = data_feed.filter_news_by_keyword(news, "苹果")
+    assert len(out) == 1 and out[0]["title"] == "苹果发布新品"
+    # 大小写不敏感：Apple 命中 Orange 条摘要里的 Apple
+    out2 = data_feed.filter_news_by_keyword(news, "APPLE")
+    assert len(out2) == 1 and out2[0]["link"] == "3"
+    # 空关键词原样返回全部
+    assert data_feed.filter_news_by_keyword(news, "   ") == news
+
+
+def test_news_text_helper_consistency():
+    """R2：_news_text 与导出/分类所用拼接口径一致（去重后单一来源）。"""
+    n = {"title": "T", "summary": "S"}
+    assert data_feed._news_text(n) == "T S"
