@@ -90,6 +90,24 @@ def _word_match(query: str, text: str) -> bool:
     return re.search(rf"(?<![a-z0-9]){re.escape(q)}(?![a-z0-9])", text) is not None
 
 
+def _count_word_matches(query: str, text: str) -> int:
+    """统计 query 在 text 中的命中次数，规则与 _word_match 一致
+    （中文子串 / 英文单词边界），用于检索相关性排序。
+
+    R2 修复（排序口径一致性）：原 search_news 用 `text.count(q)` 做相关性
+    计分，对英文是按「裸子串」计数——'open' 会把它在 'opencode' 内的出现
+    也算一次命中，使并未真正匹配的词被错误加权。现改用与「是否命中」同一套
+    单词边界规则计数，排序得分与命中判定口径统一。
+    """
+    q = query.strip().lower()
+    if not q:
+        return 0
+    if re.search(r"[一-鿿]", q):
+        return text.count(q)  # 中文：子串计数
+    pat = re.compile(rf"(?<![a-z0-9]){re.escape(q)}(?![a-z0-9])")
+    return len(pat.findall(text))
+
+
 def classify_sentiment(text: str) -> str:
     """基于关键词命中判断情绪：正面 / 负面 / 中性。
 
@@ -446,27 +464,32 @@ def filter_news_by_source(news: List[Dict], source: "str | None") -> List[Dict]:
 
 def _apply_news_filters(news: List[Dict], source: "str | None" = None,
                         sentiment: "str | None" = None,
-                        keywords: "str | None" = None) -> List[Dict]:
-    """对资讯列表统一应用「来源 + 情绪 + 关键词」过滤（R1 新能力 + R2 一致性修复）。
+                        keywords: "str | None" = None,
+                        hours: "int | float | None" = None) -> List[Dict]:
+    """对资讯列表统一应用「来源 + 情绪 + 关键词 + 时间窗口」过滤（R1 + R2）。
 
     R2 修复（隐性一致性缺陷）：此前来源过滤在 get_news 两处分支里各自内联，
-    且情绪过滤、关键词过滤从未接入聚合层——调用方若想「按来源 + 情绪 + 关键词」
-    组合筛选，只能自行在 get_news 返回后再补调 filter，既重复又容易在 limit
-    截断顺序上不一致（先截还是先筛结果不同）。现抽出统一入口，保证三类过滤
-    均在 limit 截断之前按「来源 → 情绪 → 关键词」顺序应用，缓存命中与全新
-    抓取两条路径行为完全一致。
+    且情绪过滤、关键词过滤从未接入聚合层——调用方若想「按来源 + 情绪 + 关键词 +
+    时间」组合筛选，只能自行在 get_news 返回后再补调 filter，既重复又容易在
+    limit 截断顺序上不一致（先截还是先筛结果不同）。现抽出统一入口，保证四类
+    过滤均在 limit 截断之前按「来源 → 情绪 → 关键词 → 时间」顺序应用，缓存命中
+    与全新抓取两条路径行为完全一致。
     """
     news = _filter_by_source(news, source)
     if sentiment:
         news = filter_news_by_sentiment(news, sentiment.strip())
     news = _filter_by_keyword(news, keywords)
+    if hours:
+        # R1 新能力：时间窗口过滤接入聚合层（复用 filter_news_by_time 纯函数）
+        news = filter_news_by_time(news, hours)
     return news
 
 
 def get_news(force_refresh: bool = False, limit: "int | None" = None,
              source: "str | None" = None,
              sentiment: "str | None" = None,
-             keywords: "str | None" = None) -> Tuple[List[Dict], str]:
+             keywords: "str | None" = None,
+             hours: "int | float | None" = None) -> Tuple[List[Dict], str]:
     """聚合多源资讯，网络失败时回退 mock。
 
     返回 (资讯列表, 来源说明文本)。来源说明用于 UI 友好提示。
@@ -475,6 +498,7 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
     limit：返回条数上限（按时间倒序截取前 N 条），None 表示不限。
     source：按来源名称子串过滤（不区分大小写），None 表示不过滤。
     keywords：按关键词过滤（标题 + 摘要，边界匹配），None 表示不过滤。
+    hours：时间窗口过滤（仅保留最近 N 小时资讯），None / <=0 表示不过滤。
     """
     cache_key = "news"
     if not force_refresh:
@@ -485,7 +509,7 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
             # 调用方若对返回列表做 in-place 修改（如 sort / pop / 覆盖元素）会
             # 污染缓存，导致后续命中缓存的请求拿到被篡改的数据。现返回独立副本。
             # R1 统一过滤：来源 + 情绪 + 关键词均在 limit 截断前应用（缓存命中路径）。
-            collected = _apply_news_filters(collected, source, sentiment, keywords)
+            collected = _apply_news_filters(collected, source, sentiment, keywords, hours)
             if limit is None or limit < 0:
                 return list(collected), notes
             return list(collected[:limit]), notes
@@ -527,7 +551,7 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
     # 缓存独立副本，避免后续对返回值的修改反向污染缓存
     _news_cache_set(cache_key, (list(collected), notes_str))
     # R1 统一过滤：来源 + 情绪 + 关键词均在 limit 截断前应用（全新抓取路径）。
-    collected = _apply_news_filters(collected, source, sentiment, keywords)
+    collected = _apply_news_filters(collected, source, sentiment, keywords, hours)
     if limit is not None and limit >= 0:
         collected = collected[:limit]
     return list(collected), notes_str
@@ -636,7 +660,7 @@ def search_news(query: str, news: "List[Dict] | None" = None,
         # R2 修复：原实现用朴素子串 `q in text`，导致 'cat' 误命中
         # 'category'、'in' 误命中 'include' 等假阳性；改用单词边界匹配。
         if _word_match(q, text) and (source is None or source.lower() in (n.get("source") or "").lower()):
-            scored.append((text.count(q), n))
+            scored.append((_count_word_matches(q, text), n))
     scored.sort(key=lambda x: x[0], reverse=True)
     return [n for _, n in scored]
 

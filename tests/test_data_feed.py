@@ -595,3 +595,38 @@ def test_top_news_does_not_mutate_input():
     assert [i["title"] for i in items] == ["a", "b"]
 
 
+
+
+def test_get_news_hours_filter(monkeypatch):
+    """R1 新需求：get_news(hours=) 在聚合层按时间窗口过滤（仅保留最近 N 小时）。"""
+    # 强制走 mock：mock 数据 published = now - i*3h，hours=5 仅保留 i=0,1 两条
+    monkeypatch.setattr(data_feed, "fetch_hacker_news", lambda: [])
+    monkeypatch.setattr(data_feed, "fetch_rss", lambda name, url: data_feed._mock_news())
+    data_feed.clear_news_cache()
+    recent, _ = data_feed.get_news(hours=5)
+    assert 0 < len(recent) <= 2
+    # 不过滤时应不少于过滤后数量
+    all_news, _ = data_feed.get_news(hours=None)
+    assert len(all_news) >= len(recent)
+    # hours<=0 视为不过滤
+    noop, _ = data_feed.get_news(hours=0)
+    assert len(noop) == len(all_news)
+
+
+def test_search_news_ranking_uses_word_boundary(monkeypatch):
+    """R2 验证：检索相关性计分按单词边界计数，'open' 不会在 'opencode' 内被虚增。
+
+    构造两条：一条标题含真实单词 'open'（应计入得分），一条仅含 'opencode'
+    （子串 'open' 但单词边界不匹配，不应计入）。排序得分应只反映真实命中。
+    """
+    news = [
+        {"title": "open standard proposal", "link": "1", "source": "S",
+         "published": _dt.datetime.now(), "summary": ""},
+        {"title": "opencode internals", "link": "2", "source": "S",
+         "published": _dt.datetime.now(), "summary": ""},
+    ]
+    # 仅 'open standard proposal'（link=1）应被判定命中
+    res = data_feed.search_news("open", news)
+    assert [n["link"] for n in res] == ["1"]
+    # 计分：'open' 在 link=1 中出现 1 次（单词边界），不得把 'opencode' 算入
+    assert data_feed._count_word_matches("open", "open standard opencode") == 1
