@@ -19,6 +19,8 @@
 from __future__ import annotations
 
 import datetime as _dt
+import os
+import time
 from typing import Dict, List, Tuple
 
 
@@ -30,6 +32,29 @@ TARGET_INDICES = {
     "沪深300": "sh000300",
     "科创50": "sh000688",
 }
+
+
+# ---------------------------------------------------------------------------
+# 轻量 TTL 缓存（隐式性能悬崖修复：避免每次刷新都直连 akshare）
+# ---------------------------------------------------------------------------
+_CACHE_TTL = float(os.getenv("MARKET_CACHE_TTL", "30"))
+_MARKET_CACHE: Dict[str, Tuple[object, float]] = {}
+
+
+def _cache_get(key: str):
+    item = _MARKET_CACHE.get(key)
+    if item and (time.time() - item[1]) < _CACHE_TTL:
+        return item[0]
+    return None
+
+
+def _cache_set(key: str, value) -> None:
+    _MARKET_CACHE[key] = (value, time.time())
+
+
+def clear_market_cache() -> None:
+    """清空行情缓存（便于测试与手动刷新）。"""
+    _MARKET_CACHE.clear()
 
 
 def _mock_indices() -> List[Dict]:
@@ -94,39 +119,65 @@ def get_indices() -> Tuple[List[Dict], str]:
 
     返回 (指数列表, 数据来源说明)。
     """
+    cached = _cache_get("indices")
+    if cached is not None:
+        return cached
     try:
         data = _get_via_akshare()
         if data:
-            return data, "数据来源：akshare（东方财富实时行情）"
+            result = (data, "数据来源：akshare（东方财富实时行情）")
+            _cache_set("indices", result)
+            return result
     except Exception as exc:
-        return _mock_indices(), (
+        result = _mock_indices(), (
             f"⚠️ akshare 抓取失败（{type(exc).__name__}），已回退内置示例数据（离线模式）"
         )
-    return _mock_indices(), "⚠️ akshare 未返回有效数据，已回退内置示例数据（离线模式）"
+        _cache_set("indices", result)
+        return result
+    result = _mock_indices(), "⚠️ akshare 未返回有效数据，已回退内置示例数据（离线模式）"
+    _cache_set("indices", result)
+    return result
+
+
+def get_market_overview() -> Dict:
+    """聚合概览：指数列表 + 涨跌平统计 + 数据来源，便于看板头部展示。
+
+    返回结构：
+      {"indices": [...], "up": int, "down": int, "flat": int, "source": str}
+    """
+    indices, source = get_indices()
+    up = sum(1 for i in indices if i.get("涨跌幅", 0) > 0)
+    down = sum(1 for i in indices if i.get("涨跌幅", 0) < 0)
+    flat = len(indices) - up - down
+    return {"indices": indices, "up": up, "down": down, "flat": flat, "source": source}
 
 
 # ---------------------------------------------------------------------------
 # 单只股票行情（akshare 优先 + mock 兜底）
 # ---------------------------------------------------------------------------
 def _mock_stock(symbol: str) -> Dict:
-    """内置示例个股行情（离线兜底）。"""
+    """内置示例个股行情（离线兜底）。
+
+    用 symbol 派生种子，保证同一代码多次调用结果一致（可复现、可测试）。
+    """
     import random
 
+    rnd = random.Random(abs(hash(symbol)) % (2**32))
     base = 100.0
-    price = round(base + random.uniform(-10, 20), 2)
-    pct = round(random.uniform(-5, 5), 2)
+    price = round(base + rnd.uniform(-10, 20), 2)
+    pct = round(rnd.uniform(-5, 5), 2)
     return {
         "名称": symbol,
         "代码": symbol,
         "最新价": price,
         "涨跌幅": pct,
         "涨跌额": round(price * pct / 100, 2),
-        "成交量": int(random.uniform(1e5, 5e6)),
-        "成交额": round(random.uniform(1e8, 5e9), 2),
-        "今开": round(price * (1 - random.uniform(0, 0.02)), 2),
+        "成交量": int(rnd.uniform(1e5, 5e6)),
+        "成交额": round(rnd.uniform(1e8, 5e9), 2),
+        "今开": round(price * (1 - rnd.uniform(0, 0.02)), 2),
         "昨收": round(price * (1 - pct / 100), 2),
-        "最高": round(price * (1 + random.uniform(0, 0.03)), 2),
-        "最低": round(price * (1 - random.uniform(0, 0.03)), 2),
+        "最高": round(price * (1 + rnd.uniform(0, 0.03)), 2),
+        "最低": round(price * (1 - rnd.uniform(0, 0.03)), 2),
     }
 
 
@@ -138,6 +189,10 @@ def get_stock_quote(symbol: str) -> Tuple[Dict, str]:
     symbol = (symbol or "").strip()
     if not symbol:
         return {}, "未提供股票代码/名称"
+    cache_key = f"stock:{symbol}"
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return cached
     try:
         import akshare as ak
 
@@ -149,7 +204,7 @@ def get_stock_quote(symbol: str) -> Tuple[Dict, str]:
             row = df[df["代码"].str.endswith(symbol)]
         if not row.empty:
             r = row.iloc[0]
-            return {
+            result = {
                 "名称": str(r.get("名称", symbol)),
                 "代码": str(r.get("代码", code)),
                 "最新价": float(r.get("最新价", 0) or 0),
@@ -162,11 +217,17 @@ def get_stock_quote(symbol: str) -> Tuple[Dict, str]:
                 "最高": float(r.get("最高", 0) or 0),
                 "最低": float(r.get("最低", 0) or 0),
             }, "数据来源：akshare（东方财富实时行情）"
+            _cache_set(cache_key, result)
+            return result
     except Exception as exc:
-        return _mock_stock(symbol), (
+        result = _mock_stock(symbol), (
             f"⚠️ 个股行情抓取失败（{type(exc).__name__}），已回退内置示例数据（离线模式）：{symbol}"
         )
-    return _mock_stock(symbol), f"⚠️ 未匹配到个股，已回退内置示例数据（离线模式）：{symbol}"
+        _cache_set(cache_key, result)
+        return result
+    result = _mock_stock(symbol), f"⚠️ 未匹配到个股，已回退内置示例数据（离线模式）：{symbol}"
+    _cache_set(cache_key, result)
+    return result
 
 
 if __name__ == "__main__":
