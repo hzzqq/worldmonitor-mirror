@@ -333,3 +333,35 @@ def test_get_news_does_not_alias_cache(monkeypatch):
     second, _ = data_feed.get_news()  # 应命中缓存
     titles = [n.get("title") for n in second]
     assert "恶意篡改" not in titles
+
+
+def test_paginate_news_slices_correctly():
+    """R1：分页按 page/page_size 正确切片并返回元数据。"""
+    news = [{"title": f"t{i}"} for i in range(10)]
+    r = data_feed.paginate_news(news, page=1, page_size=3)
+    assert r["total"] == 10
+    assert r["pages"] == 4
+    assert r["page"] == 1
+    assert r["page_size"] == 3
+    assert len(r["items"]) == 3
+    assert r["items"][0]["title"] == "t0"
+    # 第 4 页只剩 1 条
+    r4 = data_feed.paginate_news(news, page=4, page_size=3)
+    assert r4["page"] == 4
+    assert len(r4["items"]) == 1
+    assert r4["items"][0]["title"] == "t9"
+
+
+def test_paginate_news_clamps_invalid_args():
+    """R2 隐性健壮性：page/page_size 非法（0/负数/非 int）回退默认而非抛错或空结果。"""
+    news = [{"title": f"t{i}"} for i in range(5)]
+    r0 = data_feed.paginate_news(news, page=0, page_size=10)
+    assert r0["page"] == 1  # 0 被夹到 1
+    assert len(r0["items"]) == 5
+    r_neg = data_feed.paginate_news(news, page=2, page_size=0)
+    assert r_neg["page_size"] == 10  # 0 回退默认 10
+    assert len(r_neg["items"]) == 5
+    # 超出范围的 page 夹到最后页，不返回空
+    r_over = data_feed.paginate_news(news, page=99, page_size=2)
+    assert r_over["page"] == r_over["pages"]
+    assert len(r_over["items"]) > 0

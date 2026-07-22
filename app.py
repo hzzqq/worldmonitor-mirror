@@ -92,16 +92,18 @@ def main() -> None:
     st.sidebar.info(news_note)
     st.sidebar.caption(f"本地展示时间：{_dt.datetime.now():%Y-%m-%d %H:%M:%S}")
 
-    df = build_dataframe(news_items)
+    # 时间范围筛选：复用后端纯函数 filter_news_by_time，兼容缺时间 /
+    # 带时区的条目，避免直接用 pandas 对「发布时间」列做 `>=` 比较时
+    # 因个别条目非 datetime 而隐性丢数据或抛错（R2 稳健性 + 复用既有能力）。
+    time_filtered = data_feed.filter_news_by_time(news_items, time_range)
+    df = build_dataframe(time_filtered)
     # 用后端 available_sources 构造来源选项（即便 df 为空/未建也能给出完整来源）
     src_opts = ["全部"] + data_feed.available_sources(news_items)
     selected_source = st.sidebar.selectbox("来源", src_opts)
 
     # ---- 应用筛选 ----
     filtered = df.copy()
-    now = _dt.datetime.now()
     if not filtered.empty:
-        filtered = filtered[filtered["发布时间"] >= (now - _dt.timedelta(hours=time_range))]
         if keyword:
             mask = filtered["标题"].str.lower().str.contains(keyword.lower(), na=False)
             mask |= filtered["情绪"].str.lower().str.contains(keyword.lower(), na=False)

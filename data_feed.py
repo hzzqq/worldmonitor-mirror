@@ -481,6 +481,31 @@ def search_news(query: str, news: "List[Dict] | None" = None,
     return [n for _, n in scored]
 
 
+def paginate_news(news: List[Dict], page: int = 1, page_size: int = 10) -> Dict:
+    """对资讯列表做内存分页，返回当期页与分页元数据。
+
+    R1 新能力：看板在资讯量大时无需一次性渲染全部，可按页加载（与
+    openwebui-lite 的会话消息分页思路一致，这里作用于资讯流）。
+
+    - page 从 1 开始；page / page_size 非正或非法时回退默认（1 / 10），
+      避免调用方传 0 / 负数导致切片异常或空结果（隐性健壮性）；
+    - 超出范围（page 大于总页数）会被夹到最后一页而非返回空。
+    """
+    page = page if isinstance(page, int) and page > 0 else 1
+    page_size = page_size if isinstance(page_size, int) and page_size > 0 else 10
+    total = len(news)
+    pages = max(1, (total + page_size - 1) // page_size)
+    page = min(page, pages)
+    start = (page - 1) * page_size
+    return {
+        "items": news[start:start + page_size],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "pages": pages,
+    }
+
+
 if __name__ == "__main__":
     news, msg = get_news()
     print(msg)
