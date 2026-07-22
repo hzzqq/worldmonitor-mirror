@@ -304,3 +304,32 @@ def test_filter_news_by_time_tolerates_aware_datetime():
     ]
     recent = data_feed.filter_news_by_time(news, hours=5)
     assert [n["link"] for n in recent] == ["1"]
+
+
+def test_export_news_json_is_valid_and_complete():
+    """R1 新需求验证：export_news_json 产出可被解析且字段完整的 JSON。"""
+    import json as _json
+    news = [
+        {"title": "A", "link": "http://x", "source": "S",
+         "published": "2024-01-01T12:00:00", "summary": "摘要"},
+        {"title": "B", "link": "http://y", "source": "S2",
+         "published": "2024-01-02", "summary": "其它"},
+    ]
+    out = data_feed.export_news_json(news)
+    parsed = _json.loads(out)
+    assert isinstance(parsed, list)
+    assert len(parsed) == 2
+    assert parsed[0]["title"] == "A"
+
+
+def test_get_news_does_not_alias_cache(monkeypatch):
+    """R2 隐性问题验证：修改 get_news 返回值不应污染模块缓存。"""
+    _force_mock(monkeypatch)
+    data_feed.clear_news_cache()
+    first, _ = data_feed.get_news()
+    # 调用方对返回列表做 in-place 修改
+    first.append({"title": "恶意篡改", "link": "x", "source": "z",
+                  "published": "2024-01-03", "summary": "p"})
+    second, _ = data_feed.get_news()  # 应命中缓存
+    titles = [n.get("title") for n in second]
+    assert "恶意篡改" not in titles

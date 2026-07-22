@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import datetime as _dt
+import json
 import os
 import re
 import time
@@ -357,10 +358,13 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
         cached = _news_cache_get(cache_key)
         if cached is not None:
             collected, notes = cached
+            # R2 修复（隐性别名/可变性缺陷）：此前直接把缓存里的列表对象返回，
+            # 调用方若对返回列表做 in-place 修改（如 sort / pop / 覆盖元素）会
+            # 污染缓存，导致后续命中缓存的请求拿到被篡改的数据。现返回独立副本。
             collected = _filter_by_source(collected, source)
             if limit is None or limit < 0:
-                return collected, notes
-            return collected[:limit], notes
+                return list(collected), notes
+            return list(collected[:limit]), notes
 
     collected: List[Dict] = []
     notes: List[str] = []
@@ -396,11 +400,12 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
     collected.sort(key=lambda x: x.get("published") or _dt.datetime.min, reverse=True)
 
     notes_str = "；".join(notes)
-    _news_cache_set(cache_key, (collected, notes_str))
+    # 缓存独立副本，避免后续对返回值的修改反向污染缓存
+    _news_cache_set(cache_key, (list(collected), notes_str))
     collected = _filter_by_source(collected, source)
     if limit is not None and limit >= 0:
         collected = collected[:limit]
-    return collected, notes_str
+    return list(collected), notes_str
 
 
 def _filter_by_source(news: List[Dict], source: "str | None") -> List[Dict]:
@@ -409,6 +414,15 @@ def _filter_by_source(news: List[Dict], source: "str | None") -> List[Dict]:
         return news
     key = source.lower()
     return [n for n in news if key in (n.get("source") or "").lower()]
+
+
+def export_news_json(news: List[Dict]) -> str:
+    """把资讯列表序列化为 JSON 文本（紧凑、确保 ASCII 安全），供完整机读导出 / 下载。
+
+    R1 新能力：与 export_news_csv（人读表格）互补——CSV 利于表格软件，
+    JSON 利于程序化消费与跨系统对接（如喂给下游分析管线），二者覆盖不同场景。
+    """
+    return json.dumps(news, ensure_ascii=False, indent=2)
 
 
 def available_sources(news: List[Dict]) -> List[str]:
