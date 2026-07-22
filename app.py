@@ -93,8 +93,9 @@ def main() -> None:
     st.sidebar.caption(f"本地展示时间：{_dt.datetime.now():%Y-%m-%d %H:%M:%S}")
 
     df = build_dataframe(news_items)
-    sources = ["全部"] + sorted(df["来源"].unique().tolist()) if not df.empty else ["全部"]
-    selected_source = st.sidebar.selectbox("来源", sources)
+    # 用后端 available_sources 构造来源选项（即便 df 为空/未建也能给出完整来源）
+    src_opts = ["全部"] + data_feed.available_sources(news_items)
+    selected_source = st.sidebar.selectbox("来源", src_opts)
 
     # ---- 应用筛选 ----
     filtered = df.copy()

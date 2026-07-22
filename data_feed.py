@@ -266,19 +266,22 @@ def clear_news_cache() -> None:
 # ---------------------------------------------------------------------------
 # 聚合主接口
 # ---------------------------------------------------------------------------
-def get_news(force_refresh: bool = False, limit: "int | None" = None) -> Tuple[List[Dict], str]:
+def get_news(force_refresh: bool = False, limit: "int | None" = None,
+             source: "str | None" = None) -> Tuple[List[Dict], str]:
     """聚合多源资讯，网络失败时回退 mock。
 
     返回 (资讯列表, 来源说明文本)。来源说明用于 UI 友好提示。
 
     force_refresh：忽略缓存强制重新拉取。
     limit：返回条数上限（按时间倒序截取前 N 条），None 表示不限。
+    source：按来源名称子串过滤（不区分大小写），None 表示不过滤。
     """
     cache_key = "news"
     if not force_refresh:
         cached = _news_cache_get(cache_key)
         if cached is not None:
             collected, notes = cached
+            collected = _filter_by_source(collected, source)
             if limit is None or limit < 0:
                 return collected, notes
             return collected[:limit], notes
@@ -318,9 +321,24 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None) -> Tuple[L
 
     notes_str = "；".join(notes)
     _news_cache_set(cache_key, (collected, notes_str))
+    collected = _filter_by_source(collected, source)
     if limit is not None and limit >= 0:
         collected = collected[:limit]
     return collected, notes_str
+
+
+def _filter_by_source(news: List[Dict], source: "str | None") -> List[Dict]:
+    """按来源名称子串过滤（不区分大小写）；source 为空/None 时原样返回。"""
+    if not source:
+        return news
+    key = source.lower()
+    return [n for n in news if key in (n.get("source") or "").lower()]
+
+
+def available_sources(news: List[Dict]) -> List[str]:
+    """返回资讯中出现过的去重来源名称（排序），供 UI 构造来源过滤选项。"""
+    srcs = {n.get("source", "") for n in news if n.get("source")}
+    return sorted(srcs)
 
 
 if __name__ == "__main__":

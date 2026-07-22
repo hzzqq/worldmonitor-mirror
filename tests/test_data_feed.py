@@ -126,3 +126,30 @@ def test_export_news_csv_structure_and_escaping():
     assert len(parsed) == 3  # 表头 + 2 条
     assert parsed[1][0] == "A, B 公司"
     assert parsed[2][4] == "多\n行摘要"
+
+
+def test_get_news_source_filter(tmp_path, monkeypatch):
+    """R1 新需求：get_news(source=...) 按来源子串过滤；available_sources 列出来源。"""
+    # 强制走 mock，避免网络；用临时缓存隔离
+    monkeypatch.setattr(data_feed, "fetch_hacker_news", lambda: [])
+    monkeypatch.setattr(data_feed, "fetch_rss", lambda name, url: data_feed._mock_news())
+    data_feed.clear_news_cache()
+
+    all_news, _ = data_feed.get_news()
+    srcs = data_feed.available_sources(all_news)
+    assert srcs  # 至少含 mock 来源
+    # 选一个真实存在的来源做子串过滤
+    target = srcs[0]
+    filtered, _ = data_feed.get_news(source=target)
+    assert filtered
+    assert all(target.lower() in (n.get("source") or "").lower() for n in filtered)
+    # 不存在的来源应返回空
+    none_res, _ = data_feed.get_news(source="__no_such_source__")
+    assert none_res == []
+
+
+def test_available_sources_dedup_and_sorted():
+    news = [
+        {"source": "B 源"}, {"source": "A 源"}, {"source": "B 源"}, {"source": ""},
+    ]
+    assert data_feed.available_sources(news) == ["A 源", "B 源"]
