@@ -123,6 +123,9 @@ def get_indices(limit: "int | None" = None) -> Tuple[List[Dict], str]:
     cached = _cache_get("indices")
     if cached is not None:
         data, note = cached
+        # R2 修复：缓存里存的是「抓取时的原始顺序」，若直接返回会丢失排序；
+        # 这里在每次命中时也按涨跌幅降序重排，保证缓存命中后依旧「领涨在前」。
+        data = sorted(data, key=lambda x: x.get("涨跌幅", 0), reverse=True)
         if limit is None or limit < 0:
             return data, note
         return data[:limit], note
@@ -164,6 +167,26 @@ def get_market_overview() -> Dict:
     down = sum(1 for i in indices if i.get("涨跌幅", 0) < 0)
     flat = len(indices) - up - down
     return {"indices": indices, "up": up, "down": down, "flat": flat, "source": source}
+
+
+def get_top_movers(indices: "List[Dict] | None" = None, top_n: int = 3) -> Dict:
+    """涨幅 / 跌幅榜（看板「领涨 / 领跌」面板）。
+
+    R1 新能力：从指数（或传入的行情列表）中分别取涨跌幅最高与最低的
+    top_n 条，便于一眼看出当日强弱方向。
+    - gainers：按涨跌幅降序取前 top_n（领涨）
+    - losers：按涨跌幅升序取前 top_n（领跌）
+    - flat：涨跌幅恰为 0 的项
+    indices 为 None 时自动拉取 get_indices()（带缓存、离线走 mock）。
+    """
+    if indices is None:
+        indices, _ = get_indices()
+    ranked = sorted(indices, key=lambda x: x.get("涨跌幅", 0), reverse=True)
+    return {
+        "gainers": ranked[:top_n],
+        "losers": list(reversed(ranked[-top_n:])),
+        "flat": [i for i in indices if i.get("涨跌幅", 0) == 0],
+    }
 
 
 # ---------------------------------------------------------------------------

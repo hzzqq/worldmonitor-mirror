@@ -241,6 +241,16 @@ def main() -> None:
         oc2.metric("下跌", ov["down"], help="涨跌幅 < 0 的指数数")
         oc3.metric("平盘", ov["flat"], help="涨跌幅 = 0 的指数数")
 
+        # 领涨 / 领跌榜（来自 get_top_movers，一眼看当日强弱方向）
+        movers = market.get_top_movers(indices)
+        mg, ml = st.columns(2)
+        with mg.expander("🔼 领涨 TOP3", expanded=False):
+            for m in movers["gainers"]:
+                st.write(f"{m['名称']}　{m['涨跌幅']:+}%")
+        with ml.expander("🔻 领跌 TOP3", expanded=False):
+            for m in movers["losers"]:
+                st.write(f"{m['名称']}　{m['涨跌幅']:+}%")
+
         idf = pd.DataFrame(indices)
         if not idf.empty:
             # 着色涨跌幅

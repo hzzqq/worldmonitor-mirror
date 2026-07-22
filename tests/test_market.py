@@ -109,3 +109,34 @@ def test_get_stock_quotes_batch(no_akshare):
     for sym, (quote, note) in out.items():
         assert quote["代码"] == sym
         assert isinstance(note, str)
+
+
+def test_get_indices_cache_hit_still_sorted(no_akshare):
+    """R2 修复验证：缓存命中后仍按涨跌幅降序（领涨在前）。
+
+    关键：不能在两次调用间 clear_market_cache——否则只会重算、永远走
+    不到「缓存命中返回未排序数据」的路径。这里首次填充缓存后，
+    直接第二次调用命中缓存；修复前缓存里存的是抓取原始顺序（未排序），
+    命中会返回乱序；修复后每次命中也重排。
+    """
+    market.clear_market_cache()
+    first, _ = market.get_indices()            # 首次：填充缓存（存的是未排序原始顺序）
+    assert [i["涨跌幅"] for i in first] == sorted(
+        [i["涨跌幅"] for i in first], reverse=True)
+    second, _ = market.get_indices()           # 命中缓存（不清缓存）
+    pcts = [i["涨跌幅"] for i in second]
+    assert pcts == sorted(pcts, reverse=True)     # 命中缓存也保持排序
+
+
+def test_get_top_movers(no_akshare):
+    """R1 新需求验证：get_top_movers 返回领涨/领跌榜。"""
+    market.clear_market_cache()
+    indices, _ = market.get_indices()
+    movers = market.get_top_movers(indices, top_n=2)
+    gainers = movers["gainers"]
+    losers = movers["losers"]
+    assert gainers[0]["涨跌幅"] >= gainers[1]["涨跌幅"]      # 领涨降序
+    assert losers[0]["涨跌幅"] <= losers[1]["涨跌幅"]      # 领跌升序
+    # 领涨第一 不得出现在领跌里（无交集）
+    g0 = gainers[0]["代码"]
+    assert all(l["代码"] != g0 for l in losers)
