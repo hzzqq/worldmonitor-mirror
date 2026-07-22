@@ -322,6 +322,43 @@ def test_export_news_json_is_valid_and_complete():
     assert parsed[0]["title"] == "A"
 
 
+def test_export_news_json_includes_sentiment():
+    """R2 修复验证：JSON 导出应与 CSV 对齐，附 sentiment 字段。"""
+    import json as _json
+
+    news = [
+        {"title": "某公司发布新品，业绩飙升", "link": "http://x", "source": "S",
+         "published": "2024-01-01", "summary": "创新 突破"},
+        {"title": "某企业亏损扩大股价下跌", "link": "http://y", "source": "S2",
+         "published": "2024-01-02", "summary": "裁员 风险"},
+    ]
+    parsed = _json.loads(data_feed.export_news_json(news))
+    assert "sentiment" in parsed[0]
+    assert parsed[0]["sentiment"] == "正面"
+    assert parsed[1]["sentiment"] == "负面"
+
+
+def test_export_news_markdown_format():
+    """R1 新需求验证：export_news_markdown 输出人读 Markdown，含标题链接与情绪。"""
+    news = [
+        {"title": "A公司开源突破", "link": "http://x", "source": "S",
+         "published": "2024-01-01", "summary": "开源 突破"},
+        {"title": "B平台遭攻击", "link": "http://y", "source": "S2",
+         "published": "2024-01-02", "summary": "攻击 风险"},
+    ]
+    md = data_feed.export_news_markdown(news)
+    assert md.startswith("# 资讯导出")
+    assert "[A公司开源突破](http://x)" in md
+    assert "情绪：正面" in md
+    assert "情绪：负面" in md
+
+
+def test_export_news_markdown_empty():
+    """空列表不应崩溃，给出友好占位。"""
+    md = data_feed.export_news_markdown([])
+    assert "无资讯" in md
+
+
 def test_get_news_does_not_alias_cache(monkeypatch):
     """R2 隐性问题验证：修改 get_news 返回值不应污染模块缓存。"""
     _force_mock(monkeypatch)

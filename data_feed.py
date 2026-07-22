@@ -421,8 +421,43 @@ def export_news_json(news: List[Dict]) -> str:
 
     R1 新能力：与 export_news_csv（人读表格）互补——CSV 利于表格软件，
     JSON 利于程序化消费与跨系统对接（如喂给下游分析管线），二者覆盖不同场景。
+
+    R2 修复（一致性缺陷）：此前 JSON 导出直接 dumps 原始 news，不含 sentiment
+    字段，而 export_news_csv 会附 sentiment 列——两条导出管道口径不一致，下游
+    消费 JSON 的流水线拿不到情绪标签。现与 CSV 对齐，为每条资讯补 sentiment。
     """
-    return json.dumps(news, ensure_ascii=False, indent=2)
+    enriched = []
+    for n in news:
+        item = dict(n)
+        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        item["sentiment"] = classify_sentiment(text)
+        enriched.append(item)
+    return json.dumps(enriched, ensure_ascii=False, indent=2)
+
+
+def export_news_markdown(news: List[Dict]) -> str:
+    """把资讯列表序列化为 Markdown 文本（人读 / 分享友好），与 CSV / JSON 互补。
+
+    R1 新能力：CSV 利于表格软件、JSON 利于程序化消费，Markdown 则适合直接贴进
+    文档 / 即时通讯 / 看板静态展示。每条含标题（链接）、来源、时间、情绪标签。
+    """
+    lines = ["# 资讯导出", ""]
+    if not news:
+        lines.append("_（无资讯）_")
+        return "\n".join(lines) + "\n"
+    for i, n in enumerate(news, 1):
+        title = n.get("title", "(无标题)")
+        link = n.get("link", "")
+        source = n.get("source", "")
+        published = n.get("published")
+        pub = published.isoformat() if isinstance(published, _dt.datetime) else str(published or "")
+        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        sentiment = classify_sentiment(text)
+        title_md = f"[{title}]({link})" if link else title
+        lines.append(f"{i}. {title_md}")
+        meta = f"   来源：{source}　时间：{pub}　情绪：{sentiment}"
+        lines.append(meta)
+    return "\n".join(lines) + "\n"
 
 
 def available_sources(news: List[Dict]) -> List[str]:
