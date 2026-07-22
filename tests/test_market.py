@@ -52,6 +52,34 @@ def test_get_stock_quote_mock_deterministic(no_akshare):
     assert "离线" in note_a or "回退" in note_a
 
 
+def test_mock_stock_not_dependent_on_builtin_hash(no_akshare, monkeypatch):
+    """R2 隐性可复现性验证：即便内置 hash() 抖动（模拟不同进程/PYTHONHASHSEED），
+    mock 个股行情仍应稳定一致（修复前用 hash(symbol) 会随进程变化）。"""
+    counter = {"n": 0}
+    orig_hash = builtins.hash
+
+    def jitter_hash(obj):
+        counter["n"] += 1
+        return orig_hash((obj, counter["n"]))  # 每次调用结果都不同
+
+    monkeypatch.setattr(builtins, "hash", jitter_hash)
+    a, _ = market.get_stock_quote("600000")
+    b, _ = market.get_stock_quote("600000")
+    assert a == b  # 即便内置 hash 抖动，mock 行情仍应稳定
+
+
+def test_get_index_quote_by_name_and_code(no_akshare):
+    """R1 新需求验证：get_index_quote 按名称或代码查到单条指数行情。"""
+    by_name = market.get_index_quote("上证指数")
+    assert by_name is not None
+    assert by_name["名称"] == "上证指数"
+    by_code = market.get_index_quote("sh000001")
+    assert by_code is not None
+    assert by_code["代码"] == "sh000001"
+    assert market.get_index_quote("") is None
+    assert market.get_index_quote("不存在的指数xyz") is None
+
+
 def test_get_indices_mock_structure(no_akshare):
     indices, note = market.get_indices()
     assert isinstance(indices, list) and len(indices) >= 1

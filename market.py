@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import os
 import time
 from typing import Dict, List, Tuple
@@ -199,7 +200,12 @@ def _mock_stock(symbol: str) -> Dict:
     """
     import random
 
-    rnd = random.Random(abs(hash(symbol)) % (2**32))
+    # R2 修复（隐性可复现性缺陷）：原实现用内置 hash(symbol) 派生随机种子，
+    # 但 CPython 对 str 的 hash 受 PYTHONHASHSEED 影响、每次进程启动都不同，
+    # 导致「离线 mock 个股行情」在不同运行间结果不一致，破坏可复现性与测试稳定性。
+    # 改用 md5 派生确定性种子，保证同一代码在任何进程/环境下都得到相同 mock。
+    seed = int(hashlib.md5(symbol.encode("utf-8")).hexdigest(), 16) % (2**32)
+    rnd = random.Random(seed)
     base = 100.0
     price = round(base + rnd.uniform(-10, 20), 2)
     pct = round(rnd.uniform(-5, 5), 2)
@@ -276,6 +282,22 @@ def get_stock_quotes(symbols: List[str]) -> Dict[str, Tuple[Dict, str]]:
     for sym in symbols:
         out[sym] = get_stock_quote(sym)
     return out
+
+
+def get_index_quote(query: str):
+    """按名称或代码查询单条指数行情（看板「单指数」小组件用，R1 新能力）。
+
+    优先精确匹配 名称 / 代码；未命中返回 None。
+    底层复用 get_indices()（带缓存、离线走 mock），不额外打上游。
+    """
+    query = (query or "").strip()
+    if not query:
+        return None
+    indices, _ = get_indices()
+    for it in indices:
+        if it.get("名称") == query or it.get("代码") == query:
+            return it
+    return None
 
 
 if __name__ == "__main__":
