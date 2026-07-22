@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="worldmonitor-mirror icon">
+  <defs>
+    <linearGradient id="monGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </linearGradient>
+  </defs>
+  <rect x="56" y="56" width="400" height="400" rx="112" ry="112" fill="url(#monGrad)"/>
+  <g fill="none" stroke="#ffffff" stroke-linecap="round">
+    <circle cx="256" cy="256" r="118" stroke-width="14"/>
+    <circle cx="256" cy="256" r="68" stroke-width="10"/>
+    <path d="M138 256 H374" stroke-width="8"/>
+    <path d="M256 138 V374" stroke-width="8"/>
+    <path d="M256 256 L326.7 171.7" stroke-width="8"/>
+  </g>
+  <path d="M256 256 L256 138 A118 118 0 0 1 326.7 171.7 Z" fill="#ffffff" fill-opacity="0.16"/>
+  <circle cx="322" cy="198" r="12" fill="#ffffff"/>
+</svg>
