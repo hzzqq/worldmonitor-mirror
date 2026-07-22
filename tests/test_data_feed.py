@@ -169,3 +169,62 @@ def test_summarize_news_counts_by_source_and_sentiment():
     assert s["by_sentiment"]["正面"] == 1
     assert s["by_sentiment"]["负面"] == 1
     assert s["by_sentiment"]["中性"] == 1
+
+def test_search_news_matches_title_and_summary():
+    """R1 新需求：search_news 应覆盖标题与摘要全文，且不区分大小写。"""
+    news = [
+        {"title": "国产大模型开源突破", "summary": "社区贡献创新", "source": "科技前线", "link": "http://a"},
+        {"title": "某银行系统崩溃", "summary": "引发 warning 风险调查", "source": "金融科技", "link": "http://b"},
+        {"title": "无关标题", "summary": "完全不相关的内容", "source": "其它", "link": "http://c"},
+    ]
+    # 标题命中
+    assert len(data_feed.search_news("开源", news)) == 1
+    # 摘要命中（标题不含该词）
+    assert len(data_feed.search_news("warning", news)) == 1
+    # 不区分大小写
+    assert len(data_feed.search_news("WARNING", news)) == 1
+
+def test_search_news_empty_query_returns_empty():
+    """R1：空/纯空白查询必须返回空列表（避免「空查询=全量」隐性歧义）。"""
+    news = [{"title": "x", "summary": "y", "source": "s", "link": "l"}]
+    assert data_feed.search_news("", news) == []
+    assert data_feed.search_news("   ", news) == []
+
+def test_search_news_relevance_ordering():
+    """R1：命中次数越多的条目应越靠前（按相关性降序）。"""
+    news = [
+        {"title": "alpha beta", "summary": "gamma", "source": "s", "link": "1"},
+        {"title": "alpha alpha beta beta", "summary": "alpha", "source": "s", "link": "2"},
+    ]
+    res = data_feed.search_news("alpha", news)
+    assert len(res) == 2
+    assert res[0]["link"] == "2"  # 命中 3 次，排在命中 1 次的之前
+
+def test_search_news_source_filter():
+    """R1：source 子串过滤可与检索叠加。"""
+    news = [
+        {"title": "开源突破", "summary": "", "source": "科技前线", "link": "1"},
+        {"title": "开源合作", "summary": "", "source": "财经速递", "link": "2"},
+    ]
+    res = data_feed.search_news("开源", news, source="科技")
+    assert [n["link"] for n in res] == ["1"]
+
+def test_sentiment_word_boundary_no_false_positive():
+    """R2 隐性正确性：英文词子串误命中（win→window, down→download）必须杜绝。
+
+    旧实现对英文词用朴素子串匹配，'win' 命中 'window'、'down' 命中 'download'
+    会导致中性文本被错判为正面/负面。修复后应按单词边界精确匹配。
+    """
+    assert data_feed.classify_sentiment("a new window opened in the room") == "中性"
+    assert data_feed.classify_sentiment("please download the installer file") == "中性"
+    assert data_feed.classify_sentiment("the download window is open") == "中性"
+
+def test_sentiment_word_boundary_hits_whole_word():
+    """R2：完整英文词仍应正确命中（正面 win / 负面 down）。"""
+    assert data_feed.classify_sentiment("our team will win the championship") == "正面"
+    assert data_feed.classify_sentiment("the market went down today") == "负面"
+
+def test_sentiment_cjk_substring_still_works():
+    """R2：中文词仍走子串匹配（多字词误命中概率低，保持原有行为）。"""
+    assert data_feed.classify_sentiment("公司宣布开源新框架") == "正面"
+    assert data_feed.classify_sentiment("股价暴跌引发担忧") == "负面"

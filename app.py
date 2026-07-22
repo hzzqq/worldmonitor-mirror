@@ -128,6 +128,27 @@ def main() -> None:
         sc2.metric("正面", summ["by_sentiment"].get("正面", 0))
         sc3.metric("负面", summ["by_sentiment"].get("负面", 0))
         sc4.metric("中性", summ["by_sentiment"].get("中性", 0))
+
+        # ---- 全文检索（基于后端 data_feed.search_news，标题+摘要） ----
+        search_q = st.text_input(
+            "🔍 全文检索（标题 + 摘要）",
+            placeholder="输入关键词，回车检索全部资讯",
+            key="news_search",
+        )
+        if search_q:
+            matches = data_feed.search_news(search_q, news_items)
+            st.success(f"检索「{search_q}」命中 {len(matches)} 条")
+            for m in matches:
+                mtext = f"{m.get('title', '')} {m.get('summary', '')}"
+                emoji = {"正面": "🟢", "负面": "🔴", "中性": "⚪"}.get(
+                    data_feed.classify_sentiment(mtext), "⚪"
+                )
+                with st.container():
+                    st.markdown(f"**{highlight_keyword(m.get('title', ''), search_q)}** {emoji}")
+                    st.caption(f"{m.get('source', '')} · {m.get('link', '')}")
+                    st.divider()
+            st.stop()  # 检索结果优先展示，下方常规列表不再渲染
+
         st.subheader(f"资讯列表（共 {len(filtered)} 条）")
 
         # ---- 导出当前筛选结果 ----

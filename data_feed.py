@@ -22,6 +22,7 @@ from __future__ import annotations
 import csv
 import datetime as _dt
 import os
+import re
 import time
 from typing import Dict, List, Tuple
 
@@ -61,6 +62,21 @@ NEGATIVE_WORDS = [
 ]
 
 
+def _sentiment_word_hits(word: str, low_text: str) -> bool:
+    """判断情绪词是否命中文本（隐性正确性修复）。
+
+    原实现对英文词用朴素子串匹配，导致 'win' 误命中 'window'、
+    'down' 误命中 'download' 等假阳性，进而错判情绪。这里：
+    - 中文词（含 CJK）仍用子串匹配（多字词，误命中概率低）；
+    - 英文词用单词边界精确匹配，杜绝子串误命中。
+    """
+    w = word.lower()
+    if re.search(r"[一-鿿]", w):  # 含中文：子串匹配
+        return w in low_text
+    # 英文（可能含空格短语如 'open source'）：整体单词边界匹配
+    return re.search(rf"(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])", low_text) is not None
+
+
 def classify_sentiment(text: str) -> str:
     """基于关键词命中判断情绪：正面 / 负面 / 中性。
 
@@ -69,8 +85,8 @@ def classify_sentiment(text: str) -> str:
     if not text:
         return "中性"
     low = text.lower()
-    pos = sum(1 for w in POSITIVE_WORDS if w.lower() in low)
-    neg = sum(1 for w in NEGATIVE_WORDS if w.lower() in low)
+    pos = sum(1 for w in POSITIVE_WORDS if _sentiment_word_hits(w, low))
+    neg = sum(1 for w in NEGATIVE_WORDS if _sentiment_word_hits(w, low))
     if pos > neg:
         return "正面"
     if neg > pos:
@@ -362,6 +378,31 @@ def summarize_news(news: List[Dict]) -> Dict:
         "by_source": dict(by_source),
         "by_sentiment": by_sent,
     }
+
+
+def search_news(query: str, news: "List[Dict] | None" = None,
+                source: "str | None" = None) -> List[Dict]:
+    """全文检索资讯（标题 + 摘要中匹配 query 子串，不区分大小写）。
+
+    R1 新能力：为看板提供可搜索的资讯入口。
+    - query 为空 / 纯空白时返回空列表（避免「空查询 = 全量」的隐性歧义，
+      否则前端搜索框清空会误把全部资讯当结果）；
+    - news 为 None 时自动拉取 get_news()（带缓存，离线走 mock，无网络依赖）；
+    - source 子串过滤可与检索叠加；
+    - 返回按相关性（命中次数）降序，便于优先展示最相关条目。
+    """
+    if not query or not query.strip():
+        return []
+    if news is None:
+        news, _ = get_news()
+    q = query.strip().lower()
+    scored: List[Tuple[int, Dict]] = []
+    for n in news:
+        text = f"{n.get('title', '')} {n.get('summary', '')}".lower()
+        if q in text and (source is None or source.lower() in (n.get("source") or "").lower()):
+            scored.append((text.count(q), n))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [n for _, n in scored]
 
 
 if __name__ == "__main__":
