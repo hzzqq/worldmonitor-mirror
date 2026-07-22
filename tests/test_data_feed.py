@@ -153,3 +153,19 @@ def test_available_sources_dedup_and_sorted():
         {"source": "B 源"}, {"source": "A 源"}, {"source": "B 源"}, {"source": ""},
     ]
     assert data_feed.available_sources(news) == ["A 源", "B 源"]
+
+
+def test_summarize_news_counts_by_source_and_sentiment():
+    """R1 新需求：summarize_news 聚合总量/来源/情绪分布，供看板概览指标。"""
+    news = [
+        {"title": "开源突破增长", "summary": "", "source": "科技前线"},
+        {"title": "亏损下跌利空", "summary": "", "source": "财经速递"},
+        {"title": "例行会议", "summary": "", "source": "科技前线"},
+    ]
+    s = data_feed.summarize_news(news)
+    assert s["total"] == 3
+    assert s["by_source"]["科技前线"] == 2
+    assert s["by_source"]["财经速递"] == 1
+    assert s["by_sentiment"]["正面"] == 1
+    assert s["by_sentiment"]["负面"] == 1
+    assert s["by_sentiment"]["中性"] == 1

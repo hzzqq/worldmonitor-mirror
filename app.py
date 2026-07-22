@@ -121,7 +121,14 @@ def main() -> None:
 
     # ===================== 资讯看板 =====================
     with tab_news:
-        st.subheader(f"资讯总览（共 {len(filtered)} 条）")
+        # 舆情概览指标（基于全量 news_items，而非筛选后结果）
+        summ = data_feed.summarize_news(news_items)
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        sc1.metric("资讯总量", summ["total"])
+        sc2.metric("正面", summ["by_sentiment"].get("正面", 0))
+        sc3.metric("负面", summ["by_sentiment"].get("负面", 0))
+        sc4.metric("中性", summ["by_sentiment"].get("中性", 0))
+        st.subheader(f"资讯列表（共 {len(filtered)} 条）")
 
         # ---- 导出当前筛选结果 ----
         if not filtered.empty:

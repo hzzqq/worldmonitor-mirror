@@ -341,6 +341,29 @@ def available_sources(news: List[Dict]) -> List[str]:
     return sorted(srcs)
 
 
+def summarize_news(news: List[Dict]) -> Dict:
+    """聚合统计：总量、按来源计数、按情绪计数，供看板做概览指标。
+
+    返回结构：
+      {"total": int, "by_source": {src: n}, "by_sentiment": {"正面":..,"负面":..,"中性":..}}
+    纯统计、无副作用，便于在 UI 顶部以 metric 形式呈现「舆情分布」。
+    """
+    from collections import Counter
+
+    by_source: Counter = Counter()
+    by_sent = {"正面": 0, "负面": 0, "中性": 0}
+    for n in news:
+        by_source[n.get("source", "")] += 1
+        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        s = classify_sentiment(text)
+        by_sent[s] = by_sent.get(s, 0) + 1
+    return {
+        "total": len(news),
+        "by_source": dict(by_source),
+        "by_sentiment": by_sent,
+    }
+
+
 if __name__ == "__main__":
     news, msg = get_news()
     print(msg)
