@@ -386,6 +386,33 @@ def clear_news_cache() -> None:
 # ---------------------------------------------------------------------------
 # 聚合主接口
 # ---------------------------------------------------------------------------
+def sort_news(news: List[Dict], order: str = "desc") -> List[Dict]:
+    """按发布时间排序（desc=最新优先，asc=最旧优先）。
+
+    R1 新能力：把「按时间排序」从 get_news 的 inline lambda 抽成可复用、可单测
+    的纯函数，供后端 API / 看板 / 检索叠加统一复用，避免各处重复实现排序逻辑。
+
+    R2 稳健性：原 inline 写法 `x.get("published") or _dt.datetime.min` 在
+    published 为「非 datetime 但为真值」的对象（如字符串、带时区 datetime）时
+    会返回该对象，参与比较可能因类型不兼容抛 TypeError；现对每条规整为可比较的
+    naive datetime——缺 published / 非 datetime 一律视为最旧（落末尾），带时区
+    统一去 tzinfo，排序永不抛错。不修改入参。
+    """
+    def _key(n: Dict) -> _dt.datetime:
+        pub = n.get("published")
+        if not isinstance(pub, _dt.datetime):
+            return _dt.datetime.min
+        try:
+            if getattr(pub, "tzinfo", None) is not None:
+                pub = pub.replace(tzinfo=None)
+        except Exception:
+            return _dt.datetime.min
+        return pub
+
+    reverse = order != "asc"
+    return sorted(news, key=_key, reverse=reverse)
+
+
 def filter_news_by_source(news: List[Dict], source: "str | None") -> List[Dict]:
     """按来源名称子串过滤资讯（与 filter_news_by_sentiment 对称的公开 API）。
 
@@ -474,7 +501,7 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
 
     # 按时间倒序
     collected = _dedup_news(collected)
-    collected.sort(key=lambda x: x.get("published") or _dt.datetime.min, reverse=True)
+    collected = sort_news(collected, "desc")
 
     notes_str = "；".join(notes)
     # 缓存独立副本，避免后续对返回值的修改反向污染缓存

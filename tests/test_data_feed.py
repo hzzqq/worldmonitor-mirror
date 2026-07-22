@@ -504,3 +504,61 @@ def test_get_news_keyword_filter_offline(monkeypatch):
         assert all(srcs[0].lower() in (n.get("source") or "").lower() for n in combo)
     # 不存在的关键词返回空
     assert data_feed.get_news(keywords="__no_such_kw__")[0] == []
+
+
+def test_sort_news_desc():
+    now = _dt.datetime.now()
+    items = [
+        {"title": "old", "published": now - _dt.timedelta(hours=3)},
+        {"title": "new", "published": now},
+        {"title": "mid", "published": now - _dt.timedelta(hours=1)},
+    ]
+    out = data_feed.sort_news(items, "desc")
+    assert [i["title"] for i in out] == ["new", "mid", "old"]
+
+
+def test_sort_news_asc():
+    now = _dt.datetime.now()
+    items = [
+        {"title": "old", "published": now - _dt.timedelta(hours=3)},
+        {"title": "new", "published": now},
+    ]
+    out = data_feed.sort_news(items, "asc")
+    assert [i["title"] for i in out] == ["old", "new"]
+
+
+def test_sort_news_missing_published_treated_oldest():
+    # 缺 published 的条目应排到最旧（末尾），且排序不抛错
+    now = _dt.datetime.now()
+    items = [
+        {"title": "no_time"},
+        {"title": "has_time", "published": now},
+    ]
+    out = data_feed.sort_news(items, "desc")
+    assert out[0]["title"] == "has_time"
+    assert out[-1]["title"] == "no_time"
+
+
+def test_sort_news_aware_datetime_no_error():
+    # 带时区的 published 不应让排序抛 TypeError
+    import datetime as _dt2
+    now_naive = _dt.datetime.now()
+    now_aware = now_naive.replace(tzinfo=_dt2.timezone.utc)
+    items = [
+        {"title": "aware", "published": now_aware},
+        {"title": "naive", "published": now_naive - _dt.timedelta(hours=1)},
+    ]
+    out = data_feed.sort_news(items, "desc")
+    assert out[0]["title"] == "aware"
+
+
+def test_sort_news_does_not_mutate_input():
+    now = _dt.datetime.now()
+    items = [
+        {"title": "a", "published": now - _dt.timedelta(hours=1)},
+        {"title": "b", "published": now},
+    ]
+    data_feed.sort_news(items, "desc")
+    # 入参顺序保持不变
+    assert [i["title"] for i in items] == ["a", "b"]
+
