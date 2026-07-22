@@ -639,7 +639,8 @@ def summarize_news(news: List[Dict]) -> Dict:
 
 
 def search_news(query: str, news: "List[Dict] | None" = None,
-                source: "str | None" = None) -> List[Dict]:
+                source: "str | None" = None,
+                hours: "int | float | None" = None) -> List[Dict]:
     """全文检索资讯（标题 + 摘要中匹配 query 子串，不区分大小写）。
 
     R1 新能力：为看板提供可搜索的资讯入口。
@@ -647,12 +648,20 @@ def search_news(query: str, news: "List[Dict] | None" = None,
       否则前端搜索框清空会误把全部资讯当结果）；
     - news 为 None 时自动拉取 get_news()（带缓存，离线走 mock，无网络依赖）；
     - source 子串过滤可与检索叠加；
+    - hours 时间窗口过滤（与 get_news 聚合层对称）可与检索叠加，支持
+      「只搜最近 N 小时」的资讯（R1 新能力，避免检索混入陈旧旧闻）；
     - 返回按相关性（命中次数）降序，便于优先展示最相关条目。
     """
     if not query or not query.strip():
         return []
     if news is None:
         news, _ = get_news()
+    # R1 新能力：hours 时间窗口过滤（与 get_news 聚合层对称）。
+    # R2 一致性（隐性能力缺口）：此前 search_news 不支持 hours，导致「检索」
+    # 与「聚合获取(get_news)」的时间窗口能力不对称，调用方无法在搜索时也限定
+    # 最近 N 小时。现补齐，使两者时间维度过滤口径一致。hours<=0/None 视为不过滤。
+    if hours:
+        news = filter_news_by_time(news, hours)
     q = query.strip().lower()
     scored: List[Tuple[int, Dict]] = []
     for n in news:

@@ -630,3 +630,23 @@ def test_search_news_ranking_uses_word_boundary(monkeypatch):
     assert [n["link"] for n in res] == ["1"]
     # 计分：'open' 在 link=1 中出现 1 次（单词边界），不得把 'opencode' 算入
     assert data_feed._count_word_matches("open", "open standard opencode") == 1
+
+
+def test_search_news_hours_filter():
+    """R1 新需求：search_news(hours=) 限定只搜最近 N 小时（与 get_news 对称）。"""
+    now = _dt.datetime.now()
+    news = [
+        {"title": "近讯 开源突破", "link": "1", "source": "S",
+         "published": now - _dt.timedelta(hours=1), "summary": ""},
+        {"title": "旧讯 开源回顾", "link": "2", "source": "S",
+         "published": now - _dt.timedelta(hours=20), "summary": ""},
+    ]
+    # hours=5 只应命中近 1h 的那条（含"开源"）
+    res = data_feed.search_news("开源", news, hours=5)
+    assert [n["link"] for n in res] == ["1"]
+    # 不过滤（hours=None）应命中两条
+    res_all = data_feed.search_news("开源", news, hours=None)
+    assert len(res_all) == 2
+    # hours<=0 视为不过滤
+    res_zero = data_feed.search_news("开源", news, hours=0)
+    assert len(res_zero) == 2
