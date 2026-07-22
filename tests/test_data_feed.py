@@ -42,3 +42,30 @@ def test_get_news_returns_list():
     assert isinstance(news, list)
     assert len(news) >= 1
     assert all("title" in n and "link" in n for n in news)
+
+
+def test_dedup_removes_duplicate_links():
+    items = [
+        {"title": "A", "link": "https://x.com/1"},
+        {"title": "A copy", "link": "https://x.com/1"},  # 同链接
+        {"title": "B", "link": "https://x.com/2"},
+    ]
+    out = data_feed._dedup_news(items)
+    assert len(out) == 2
+    links = {i["link"] for i in out}
+    assert "https://x.com/1" in links and "https://x.com/2" in links
+
+
+def test_get_news_has_no_duplicate_links():
+    news, _ = data_feed.get_news()
+    links = [n.get("link") for n in news if n.get("link")]
+    assert len(links) == len(set(links))  # 链接级唯一
+
+
+def test_group_by_sentiment_sums_to_total():
+    news, _ = data_feed.get_news()
+    groups = data_feed.group_by_sentiment(news)
+    total = sum(len(v) for v in groups.values())
+    assert total == len(news)
+    # 每个分组键都应有定义
+    assert set(groups.keys()) == {"正面", "负面", "中性"}

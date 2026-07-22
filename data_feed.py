@@ -75,6 +75,39 @@ def classify_sentiment(text: str) -> str:
     return "中性"
 
 
+def _dedup_key(item: Dict) -> str:
+    """去重键：优先用链接归一，否则用标题归一。"""
+    link = (item.get("link") or "").strip().lower()
+    title = (item.get("title") or "").strip().lower()
+    return link or title
+
+
+def _dedup_news(items: List[Dict]) -> List[Dict]:
+    """按链接/标题去除重复资讯（多源聚合时的隐性重复问题）。"""
+    seen = set()
+    out: List[Dict] = []
+    for it in items:
+        key = _dedup_key(it)
+        if key and key in seen:
+            continue
+        seen.add(key)
+        out.append(it)
+    return out
+
+
+def group_by_sentiment(news: List[Dict]) -> Dict[str, List[Dict]]:
+    """按情绪将资讯分组，便于看板做「正面/负面/中性」聚合展示。
+
+    返回 {"正面": [...], "负面": [...], "中性": [...]}；未命中三类时归入中性。
+    """
+    groups: Dict[str, List[Dict]] = {"正面": [], "负面": [], "中性": []}
+    for n in news:
+        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        s = classify_sentiment(text)
+        groups.setdefault(s, groups["中性"]).append(n)
+    return groups
+
+
 # ---------------------------------------------------------------------------
 # 抓取：Hacker News
 # ---------------------------------------------------------------------------
@@ -216,6 +249,7 @@ def get_news(force_refresh: bool = False) -> Tuple[List[Dict], str]:
         notes.append("已补充部分示例数据以丰富展示")
 
     # 按时间倒序
+    collected = _dedup_news(collected)
     collected.sort(key=lambda x: x.get("published") or _dt.datetime.min, reverse=True)
     return collected, "；".join(notes)
 
