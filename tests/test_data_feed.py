@@ -108,3 +108,21 @@ def test_get_news_caches_and_clear(monkeypatch):
     data_feed.clear_news_cache()
     data_feed.get_news()
     assert calls["n"] == 2
+
+
+def test_export_news_csv_structure_and_escaping():
+    """R1 新需求：导出 CSV；含逗号/换行的标题不应破坏行结构（CSV 引用）。"""
+    news = [
+        {"title": "A, B 公司", "link": "http://x", "source": "S",
+         "published": "2024-01-01T12:00:00", "summary": "摘要一行"},
+        {"title": "C", "link": "http://y", "source": "S2",
+         "published": "2024-01-02", "summary": "多\n行摘要"},
+    ]
+    out = data_feed.export_news_csv(news)
+    assert out.startswith("title,link")
+    # 用 csv 读回，验证字段未被逗号/换行拆散
+    import csv as _csv, io
+    parsed = list(_csv.reader(io.StringIO(out)))
+    assert len(parsed) == 3  # 表头 + 2 条
+    assert parsed[1][0] == "A, B 公司"
+    assert parsed[2][4] == "多\n行摘要"

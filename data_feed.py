@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import csv
 import datetime as _dt
 import os
 import time
@@ -108,6 +109,32 @@ def group_by_sentiment(news: List[Dict]) -> Dict[str, List[Dict]]:
         s = classify_sentiment(text)
         groups.setdefault(s, groups["中性"]).append(n)
     return groups
+
+
+def export_news_csv(news: List[Dict]) -> str:
+    """把资讯列表序列化为 CSV 文本（含表头），用于导出 / 下载。
+
+    使用 csv 模块做字段引用，避免标题/摘要中的逗号、换行破坏结构
+    （CSV 注入 / 截断防护——隐性健壮性问题）。
+    """
+    import io
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["title", "link", "source", "published", "summary", "sentiment"])
+    for n in news:
+        published = n.get("published")
+        pub = published.isoformat() if isinstance(published, _dt.datetime) else str(published or "")
+        text = f"{n.get('title', '')} {n.get('summary', '')}"
+        writer.writerow([
+            n.get("title", ""),
+            n.get("link", ""),
+            n.get("source", ""),
+            pub,
+            n.get("summary", ""),
+            classify_sentiment(text),
+        ])
+    return buf.getvalue()
 
 
 # ---------------------------------------------------------------------------
