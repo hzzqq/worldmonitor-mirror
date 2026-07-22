@@ -470,3 +470,37 @@ def test_news_text_helper_consistency():
     """R2：_news_text 与导出/分类所用拼接口径一致（去重后单一来源）。"""
     n = {"title": "T", "summary": "S"}
     assert data_feed._news_text(n) == "T S"
+
+
+def test_filter_news_by_keyword_word_boundary_no_fp():
+    """R2 一致性修复：关键词过滤应与 search_news 同源用边界匹配，
+    英文 'cat' 不应误命中 'category'。"""
+    news = [
+        {"title": "category theory 简介", "link": "1", "source": "x", "summary": ""},
+        {"title": "猫 cat 相关", "link": "2", "source": "y", "summary": "关于 cat 的内容"},
+    ]
+    # 'cat' 不应命中 'category'（子串假阳性），但应命中真正含独立词 cat 的条目
+    out = data_feed.filter_news_by_keyword(news, "cat")
+    assert len(out) == 1 and out[0]["link"] == "2"
+    # 完整词 'category' 仍应命中
+    assert len(data_feed.filter_news_by_keyword(news, "category")) == 1
+
+
+def test_get_news_keyword_filter_offline(monkeypatch):
+    """R1 新需求：get_news(keywords=...) 在聚合层按关键词过滤（与 source/sentiment 对称）。"""
+    monkeypatch.setattr(data_feed, "fetch_hacker_news", lambda: [])
+    monkeypatch.setattr(data_feed, "fetch_rss", lambda name, url: data_feed._mock_news())
+    data_feed.clear_news_cache()
+    # 关键词「开源」应只保留含该独立词的条目
+    filtered, _ = data_feed.get_news(keywords="开源")
+    assert filtered
+    assert all(
+        data_feed._word_match("开源", data_feed._news_text(n).lower()) for n in filtered
+    )
+    # 组合：关键词 + 来源 叠加过滤
+    srcs = data_feed.available_sources(filtered)
+    if srcs:
+        combo, _ = data_feed.get_news(keywords="开源", source=srcs[0])
+        assert all(srcs[0].lower() in (n.get("source") or "").lower() for n in combo)
+    # 不存在的关键词返回空
+    assert data_feed.get_news(keywords="__no_such_kw__")[0] == []
