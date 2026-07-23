@@ -580,6 +580,13 @@ def export_news_json(news: List[Dict]) -> str:
         item = dict(n)
         text = _news_text(n)
         item["sentiment"] = classify_sentiment(text)
+        # R2 修复（隐性崩溃）：实际资讯里 published 是 datetime 对象，
+        # json.dumps 会抛 TypeError: Object of type datetime is not
+        # JSON serializable，导致真实数据导出时整条链路崩溃。现统一规整为
+        # ISO 字符串（与 export_news_csv 的口径一致）。仅改副本，不动入参。
+        pub = item.get("published")
+        if isinstance(pub, _dt.datetime):
+            item["published"] = pub.isoformat()
         enriched.append(item)
     return json.dumps(enriched, ensure_ascii=False, indent=2)
 
@@ -607,6 +614,50 @@ def export_news_markdown(news: List[Dict]) -> str:
         meta = f"   来源：{source}　时间：{pub}　情绪：{sentiment}"
         lines.append(meta)
     return "\n".join(lines) + "\n"
+
+
+# 趋势词停用词表（极简，避免高频虚词污染「热门话题」）
+_STOPWORDS = {
+    "的", "了", "和", "与", "在", "是", "为", "对", "及", "等", "也", "并",
+    "将", "已", "该", "其", "此", "中", "上", "下", "新", "公司", "平台",
+    "我们", "你们", "他们", "一个", "可以", "通过", "已经", "表示",
+    "the", "and", "for", "with", "that", "this", "have", "from", "are",
+    "will", "your", "been", "were", "they", "their", "about", "would",
+}
+
+
+def trending_keywords(news: List[Dict], top_k: int = 10, min_len: int = 2) -> List[Tuple[str, int]]:
+    """提取资讯语料中的热门关键词（供看板「趋势话题」组件）。
+
+    R1 新能力：看板需要一眼看出近期舆论焦点，但整套模块此前只有
+    「按情绪/来源/关键词过滤」与「检索」，缺少对全量语料的「高频词提炼」。
+    这里实现无外部分词依赖的轻量提取：
+      - 英文 / 数字词：正则切分后按词计数（长度 >= min_len）；
+      - 中文（CJK）：连续段按二元语法（bigram）切分计数（不引入 jieba 依赖，
+        在离线/受限环境也能跑），单字默认跳过；
+      - 命中停用词表的词被剔除，避免「的/公司/平台」等高频虚词霸榜；
+      - 返回 [(词, 次数), ...] 按次数降序（次数相同按词升序稳定），取前 top_k。
+    纯函数、无副作用、不修改入参，便于单测。
+    """
+    from collections import Counter
+
+    counter: Counter = Counter()
+    for n in news:
+        text = _news_text(n).lower()
+        # 英文 / 数字词
+        for w in re.findall(r"[a-z0-9]+", text):
+            if len(w) >= min_len and w not in _STOPWORDS:
+                counter[w] += 1
+        # 中文：CJK 连续段按二元语法切分
+        for seg in re.findall(r"[一-鿿]+", text):
+            if len(seg) < 2:
+                continue
+            for i in range(len(seg) - 1):
+                bg = seg[i:i + 2]
+                if bg in _STOPWORDS:
+                    continue
+                counter[bg] += 1
+    return sorted(counter.items(), key=lambda x: (-x[1], x[0]))[:top_k]
 
 
 def available_sources(news: List[Dict]) -> List[str]:

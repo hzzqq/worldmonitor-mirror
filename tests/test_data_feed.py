@@ -672,3 +672,63 @@ def test_search_news_sentiment_filter():
     # 检索 "合作"（仅 3 命中）叠加 sentiment=正面 -> 命中 3
     pos = data_feed.search_news("合作", news, sentiment="正面")
     assert [n["link"] for n in pos] == ["3"]
+
+
+def test_trending_keywords_extracts_cjk_bigrams_and_english():
+    """R1 新需求验证：trending_keywords 同时提炼中文二元语法与英文词。"""
+    news = [
+        {"title": "国产大模型开源突破", "summary": "大模型生态增长", "source": "S", "link": "1"},
+        {"title": "大模型推理加速", "summary": "开源社区贡献大模型工具", "source": "S", "link": "2"},
+        {"title": "open source rocks", "summary": "open source is great", "source": "S", "link": "3"},
+    ]
+    kw = data_feed.trending_keywords(news, top_k=20)
+    words = [w for w, _ in kw]
+    # 中文「大模型」经二元语法切分为「大模」「模型」，二者都应被提炼出来
+    assert "大模" in words and "模型" in words
+    # 「开源」作为二元语法出现
+    assert "开源" in words
+    # 英文 open/source 应被提取
+    assert "open" in words and "source" in words
+    # 返回结构为 (词, 次数) 列表，且按次数降序
+    assert all(isinstance(w, str) and isinstance(c, int) for w, c in kw)
+    assert kw == sorted(kw, key=lambda x: (-x[1], x[0]))
+
+
+def test_trending_keywords_filters_stopwords_and_short():
+    """R2 一致性：停用词与过短词不应污染结果。"""
+    news = [
+        {"title": "公司平台与平台公司", "summary": "在 是 的", "source": "S", "link": "1"},
+    ]
+    kw = data_feed.trending_keywords(news, top_k=20)
+    words = [w for w, _ in kw]
+    # 「公司」「平台」属停用词应被剔除；单字虚词也不应出现
+    assert "公司" not in words
+    assert "平台" not in words
+    assert all(len(w) >= 2 for w, _ in kw)
+
+
+def test_trending_keywords_top_k_limits():
+    """top_k 应截断返回数量。"""
+    news = [{"title": f"词{i} 句{i}", "summary": "", "source": "S", "link": str(i)} for i in range(20)]
+    kw = data_feed.trending_keywords(news, top_k=5)
+    assert len(kw) == 5
+
+
+def test_export_news_json_handles_datetime_published():
+    """R2 修复验证：真实资讯 published 为 datetime 时不应抛 TypeError。
+
+    旧实现直接 json.dumps 含 datetime 的 dict，会抛
+    `Object of type datetime is not JSON serializable`；现规整为 ISO 字符串。
+    """
+    import json as _json
+    import datetime as _dt2
+
+    now = _dt2.datetime(2024, 1, 2, 3, 4, 5)
+    news = [
+        {"title": "某公司发布新品业绩飙升", "link": "http://x", "source": "S",
+         "published": now, "summary": "创新 突破"},
+    ]
+    out = data_feed.export_news_json(news)
+    parsed = _json.loads(out)  # 不抛异常即通过
+    assert parsed[0]["published"] == "2024-01-02T03:04:05"
+    assert parsed[0]["sentiment"] == "正面"
