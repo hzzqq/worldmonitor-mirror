@@ -650,3 +650,25 @@ def test_search_news_hours_filter():
     # hours<=0 视为不过滤
     res_zero = data_feed.search_news("开源", news, hours=0)
     assert len(res_zero) == 2
+
+
+def test_search_news_sentiment_filter():
+    """R1 验证：search_news(sentiment=) 与检索叠加，只看指定情绪
+    （与 get_news 的 source+sentiment+keywords+hours 三件套对称）。"""
+    now = _dt.datetime.now()
+    news = [
+        {"title": "国产大模型开源突破", "link": "1", "source": "S",
+         "published": now, "summary": "开源 突破 增长"},
+        {"title": "某车企季度亏损", "link": "2", "source": "S",
+         "published": now, "summary": "亏损 下跌 利空"},
+        {"title": "某平台获合作里程碑", "link": "3", "source": "S",
+         "published": now, "summary": "合作 里程碑 开源"},
+    ]
+    # 检索 "开源" 应命中 1、3 两条；叠加 sentiment=负面 只留 2（亏损那条不含"开源"）
+    all_hits = data_feed.search_news("开源", news)
+    assert len(all_hits) == 2
+    neg = data_feed.search_news("开源", news, sentiment="负面")
+    assert neg == []  # 负面里没有"开源"命中，检索集先被情绪收窄
+    # 检索 "合作"（仅 3 命中）叠加 sentiment=正面 -> 命中 3
+    pos = data_feed.search_news("合作", news, sentiment="正面")
+    assert [n["link"] for n in pos] == ["3"]
