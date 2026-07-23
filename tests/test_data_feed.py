@@ -714,6 +714,37 @@ def test_trending_keywords_top_k_limits():
     assert len(kw) == 5
 
 
+def test_trending_keywords_min_len_applies_to_cjk():
+    """R2 验证：min_len 应对中文 n-gram 统一生效（不再被二元语法绕过）。
+
+    此前 min_len 仅约束英文 token，中文二元语法恒为 2 字，传入 min_len=3
+    仍会混入 2 字碎片。现 min_len=3 时 2 字中文（如「开源」）应被排除，
+    仅保留长度 >= 3 的 n-gram（如三元语法「大模型」）。
+    """
+    news = [
+        {"title": "开源 大模型 突破", "summary": "开源 大模型 生态", "source": "S", "link": "1"},
+    ]
+    kw = data_feed.trending_keywords(news, top_k=20, min_len=3, max_ngram=3)
+    words = [w for w, _ in kw]
+    assert all(len(w) >= 3 for w, _ in kw)
+    assert "开源" not in words  # 2 字中文应被 min_len=3 过滤
+    assert "大模型" in words     # 3 字中文短语保留
+
+
+def test_trending_keywords_max_ngram_extracts_trigrams():
+    """R1 验证：max_ngram>=3 时额外统计三元语法（如「大模型」）。
+
+    默认 max_ngram=2 只产出二元语法，不含「大模型」；max_ngram=3 时应出现。
+    """
+    news = [
+        {"title": "大模型 开源", "summary": "大模型 生态", "source": "S", "link": "1"},
+    ]
+    default_kw = data_feed.trending_keywords(news, top_k=20)
+    assert "大模型" not in [w for w, _ in default_kw]  # 默认仅 bigram
+    trigram_kw = data_feed.trending_keywords(news, top_k=20, max_ngram=3)
+    assert "大模型" in [w for w, _ in trigram_kw]       # max_ngram=3 产出 trigram
+
+
 def test_export_news_json_handles_datetime_published():
     """R2 修复验证：真实资讯 published 为 datetime 时不应抛 TypeError。
 
