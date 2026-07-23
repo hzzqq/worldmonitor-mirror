@@ -127,9 +127,24 @@ def classify_sentiment(text: str) -> str:
 
 def _dedup_key(item: Dict) -> str:
     """去重键：优先用链接归一，否则用标题归一。"""
-    link = (item.get("link") or "").strip().lower()
+    link = _normalize_link(item.get("link"))
     title = (item.get("title") or "").strip().lower()
     return link or title
+
+
+def _normalize_link(link) -> str:
+    """把链接规整为去重键：去片段(#)与查询参数(?)，避免同一文章因
+
+    `?utm_source=x` / `#ref` 等跟踪参数被误判为不同链接而漏去重
+    （R2 隐性去重缺陷：原实现直接对原始 link 做 lower，导致
+    `a.com/news` 与 `a.com/news?ref=1` 被视为两篇不同资讯并存）。
+    """
+    if not link:
+        return ""
+    s = str(link).strip().lower()
+    s = s.split("#", 1)[0]
+    s = s.split("?", 1)[0]
+    return s.rstrip("/")
 
 
 def _dedup_news(items: List[Dict]) -> List[Dict]:
@@ -156,6 +171,49 @@ def group_by_sentiment(news: List[Dict]) -> Dict[str, List[Dict]]:
         s = classify_sentiment(text)
         groups.setdefault(s, groups["中性"]).append(n)
     return groups
+
+
+def _tokens(text: str) -> "set[str]":
+    """把文本切分为去停用词后的 token 集合（供 related_news 计算重叠度）。
+
+    - 英文 / 数字：正则切分；
+    - 中文（CJK）：单字 + 二元语法（不引入 jieba，离线可用）；
+    - 全部小写、剔除停用词，保证跨条目可比。
+    """
+    text = (text or "").lower()
+    toks: "set[str]" = set(re.findall(r"[a-z0-9]+", text))
+    for seg in re.findall(r"[一-鿿]+", text):
+        for i in range(len(seg)):
+            toks.add(seg[i])  # 单字
+            if i + 1 < len(seg):
+                toks.add(seg[i:i + 2])  # 二元
+    return {t for t in toks if t and t not in _STOPWORDS}
+
+
+def related_news(news: List[Dict], ref: "str | Dict", top_k: int = 5) -> List[Dict]:
+    """返回与给定参考（文本或单条资讯）最相关的资讯（按词重叠数降序）。
+
+    R1 新能力：看板「相关阅读」组件——用户阅读某条资讯时，推荐语义相近的
+    其它资讯（如同一事件的后续报道、同主题深度分析）。ref 可为字符串或单条
+    资讯 dict（自动取标题 + 摘要）；空 news / 空 ref 返回空列表；重叠为 0 的
+    条目不计入（绝不返回完全不相关的结果，避免「相关」名不副实）。
+    """
+    if not news:
+        return []
+    ref_text = _news_text(ref) if isinstance(ref, dict) else (ref or "")
+    ref_tokens = _tokens(ref_text)
+    if not ref_tokens:
+        return []
+    scored: List[Tuple[int, Dict]] = []
+    for n in news:
+        toks = _tokens(_news_text(n))
+        if not toks:
+            continue
+        overlap = len(ref_tokens & toks)
+        if overlap > 0:
+            scored.append((overlap, n))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return [n for _, n in scored[:top_k]]
 
 
 def filter_news_by_sentiment(news: List[Dict], sentiment: str) -> List[Dict]:

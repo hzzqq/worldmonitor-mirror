@@ -763,3 +763,47 @@ def test_export_news_json_handles_datetime_published():
     parsed = _json.loads(out)  # 不抛异常即通过
     assert parsed[0]["published"] == "2024-01-02T03:04:05"
     assert parsed[0]["sentiment"] == "正面"
+
+
+def test_dedup_normalizes_tracking_params():
+    """R2 修复验证：同一文章因 ?utm / #ref 跟踪参数被误判为不同链接的，
+    现应在去重阶段合并为一条（而非两篇并存）。"""
+    items = [
+        {"title": "同一条新闻", "link": "https://news.example/a", "source": "S",
+         "published": None, "summary": "x"},
+        {"title": "同一条新闻", "link": "https://news.example/a?utm_source=weibo", "source": "S",
+         "published": None, "summary": "x"},
+        {"title": "同一条新闻", "link": "https://news.example/a#section", "source": "S",
+         "published": None, "summary": "x"},
+    ]
+    out = data_feed._dedup_news(items)
+    assert len(out) == 1  # 三条实为同一篇
+
+
+def test_related_news_returns_most_overlapping():
+    """R1 新能力验证：related_news 应返回与参考条目词重叠最多的其它资讯，
+    且完全不相关的条目不出现。"""
+    ref = {"title": "国产大模型开源生态突破", "link": "r", "source": "S",
+           "published": None, "summary": "开源 突破 增长"}
+    others = [
+        {"title": "某芯片厂商发布AI加速卡", "link": "1", "source": "S",
+         "published": None, "summary": "发布 创新 性能"},  # 仅 1 个重叠词(发布≈? 无) -> 看具体
+        {"title": "开源数据库里程碑合作", "link": "2", "source": "S",
+         "published": None, "summary": "开源 合作 社区"},
+        {"title": "足球比赛结果报道", "link": "3", "source": "S",
+         "published": None, "summary": "球队 进球 比分"},  # 不相关
+    ]
+    # 构造两组，ref 与「开源数据库」重叠最高（开源/合作）
+    res = data_feed.related_news(others, ref, top_k=5)
+    # 足球那条（零重叠）不应出现
+    assert all("足球" not in r["title"] for r in res)
+    # 含「开源」的条目应在结果中
+    assert any("开源数据库" in r["title"] for r in res)
+
+
+def test_related_news_empty_inputs():
+    """边界：空 news 或空 ref 文本应返回空列表，不抛异常。"""
+    assert data_feed.related_news([], {"title": "x", "summary": "y"}) == []
+    assert data_feed.related_news([{"title": "a", "summary": "b"}], "") == []
+    # ref 文本无有效 token（仅英文停用词）也应安全返回空
+    assert data_feed.related_news([{"title": "a", "summary": "the and for"}], "the and for") == []
