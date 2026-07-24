@@ -736,6 +736,22 @@ def available_sources(news: List[Dict]) -> List[str]:
     return sorted(srcs)
 
 
+def group_by_source(news: List[Dict]) -> Dict[str, List[Dict]]:
+    """按来源将资讯分组，返回 {来源: [资讯...]}，供看板做「来源分布」聚合。
+
+    R1 新能力：与 group_by_sentiment（按情绪分组）对称，补齐「按来源
+    分组」维度——看板可据此绘制各来源的产出量、或在某一来源下
+    单独折叠/展开。分组保持各分组内相对顺序与入参一致（稳定），
+    空列表返回空 dict；无 source 字段的条目归入 "" 键（不丢失）。
+    纯函数、无副作用、不修改入参。
+    """
+    groups: Dict[str, List[Dict]] = {}
+    for n in news:
+        key = n.get("source", "") or ""
+        groups.setdefault(key, []).append(n)
+    return groups
+
+
 def summarize_news(news: List[Dict]) -> Dict:
     """聚合统计：总量、按来源计数、按情绪计数，供看板做概览指标。
 

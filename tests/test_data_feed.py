@@ -72,6 +72,23 @@ def test_group_by_sentiment_sums_to_total():
     assert set(groups.keys()) == {"正面", "负面", "中性"}
 
 
+def test_group_by_source_roundtrip():
+    """R1 新需求验证：group_by_source 按来源分组且不丢条目、顺序稳定。"""
+    news = [
+        {"title": "a", "source": "X"},
+        {"title": "b", "source": "Y"},
+        {"title": "c", "source": "X"},
+        {"title": "d", "source": ""},  # 无来源归入 ""
+    ]
+    groups = data_feed.group_by_source(news)
+    assert set(groups.keys()) == {"X", "Y", ""}
+    assert [n["title"] for n in groups["X"]] == ["a", "c"]  # 顺序与入参一致
+    assert [n["title"] for n in groups["Y"]] == ["b"]
+    assert [n["title"] for n in groups[""]] == ["d"]
+    # 分组后条目总数不丢
+    assert sum(len(v) for v in groups.values()) == len(news)
+
+
 def _force_mock(monkeypatch):
     """让所有网络抓取抛错，从而强制走内置 mock 分支（无网络依赖）。"""
     def _boom(*a, **k):
