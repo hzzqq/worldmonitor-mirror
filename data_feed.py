@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import datetime as _dt
+import difflib
 import json
 import os
 import re
@@ -157,6 +158,47 @@ def _dedup_news(items: List[Dict]) -> List[Dict]:
             continue
         seen.add(key)
         out.append(it)
+    return out
+
+
+def _title_similarity(a: str, b: str) -> float:
+    """两标题的序列相似度（0~1）。
+
+    用 difflib.SequenceMatcher 的比率，对「同题改写 / 增删标点 / 调换词序」
+    等近似重复更鲁棒，比纯集合交并比更能反映「是否同一篇报道」。
+    """
+    a = (a or "").strip().lower()
+    b = (b or "").strip().lower()
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def dedup_similar_news(news: List[Dict], threshold: float = 0.85) -> List[Dict]:
+    """按标题相似度去除近似重复资讯（R1 新能力）。
+
+    与 `_dedup_news`（仅按链接/标题「精确」归一去重）互补：多源转发同一
+    条新闻时，链接带不同跟踪参数、标题被改写为「XX 突发」「刚刚！XX」等，
+    精确键无法命中而漏去重（R2 隐性去重缺陷——近似重复仍会在看板并列出现、
+    既占版面又放大权重）。这里用序列相似度对「保留下来的」结果再做一遍
+    软去重，相似度 >= threshold 的后续条目被丢弃，保留首次出现者。
+
+    - 始终保留第一项（无前驱可比对）；
+    - 已通过 `_dedup_key` 精确去重的项仍可能互为近似，故在精确去重之后调用；
+    - 相似度阈值 0~1，越大越严格（越难被判为重复）；threshold<=0 视为关闭；
+    - 不修改入参，返回新列表。
+    """
+    if threshold <= 0:
+        return list(news)
+    out: List[Dict] = []
+    kept_titles: list[str] = []
+    for n in news:
+        title = (n.get("title") or "").strip().lower()
+        if any(_title_similarity(title, t) >= threshold for t in kept_titles):
+            continue
+        out.append(n)
+        if title:
+            kept_titles.append(title)
     return out
 
 

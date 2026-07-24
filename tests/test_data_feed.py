@@ -824,3 +824,49 @@ def test_related_news_empty_inputs():
     assert data_feed.related_news([{"title": "a", "summary": "b"}], "") == []
     # ref 文本无有效 token（仅英文停用词）也应安全返回空
     assert data_feed.related_news([{"title": "a", "summary": "the and for"}], "the and for") == []
+
+
+def _mk_news(*titles):
+    return [{"title": t, "link": str(i), "source": "S",
+             "published": None, "summary": ""} for i, t in enumerate(titles)]
+
+
+def test_dedup_similar_removes_near_duplicates():
+    """R1 近似去重：改写标题（加「突发」「刚刚！」、改标点）应被判为重复。"""
+    news = _mk_news(
+        "国产大模型开源突破",
+        "刚刚！国产大模型开源突破",          # 近似重复（改写/加语气词）
+        "国产大模型开源突破。",              # 仅多一个句号
+        "足球比赛结果报道",                  # 不相关，应保留
+    )
+    out = data_feed.dedup_similar_news(news, threshold=0.85)
+    titles = [n["title"] for n in out]
+    assert "国产大模型开源突破" in titles
+    assert "足球比赛结果报道" in titles
+    # 两条近似改写都不应再出现（列被软去重）
+    assert "刚刚！国产大模型开源突破" not in titles
+    assert "国产大模型开源突破。" not in titles
+    assert len(out) == 2
+
+
+def test_dedup_similar_keeps_dissimilar():
+    """R1 近似去重：明显不同的标题（相似度低于阈值）全部保留。"""
+    news = _mk_news("国产大模型开源突破", "足球比赛结果报道", "油价今日上调")
+    out = data_feed.dedup_similar_news(news, threshold=0.85)
+    assert len(out) == 3
+
+
+def test_dedup_similar_threshold_zero_disabled():
+    """R1 近似去重：threshold<=0 视为关闭，原样返回。"""
+    news = _mk_news("国产大模型开源突破", "刚刚！国产大模型开源突破")
+    out = data_feed.dedup_similar_news(news, threshold=0)
+    assert len(out) == 2
+
+
+def test_dedup_similar_no_mutate_input():
+    """R3 纯度：近似去重不修改入参，返回新列表。"""
+    news = _mk_news("国产大模型开源突破", "刚刚！国产大模型开源突破")
+    before = list(news)
+    data_feed.dedup_similar_news(news, threshold=0.85)
+    assert news == before
+
