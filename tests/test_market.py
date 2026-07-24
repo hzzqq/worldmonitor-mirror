@@ -18,6 +18,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 import market  # noqa: E402
+import data_feed  # noqa: E402
 
 
 @pytest.fixture
@@ -194,3 +195,66 @@ def test_search_indices_no_match_returns_empty(no_akshare):
     """search_indices 无匹配时返回空列表（不抛异常）。"""
     market.clear_market_cache()
     assert market.search_indices("不存在的指数zzz") == []
+
+
+def test_market_overview_accepts_preloaded_indices(no_akshare):
+    """R2 一致性修复验证：传入已加载 indices 后，概览 up/down/flat 与
+    该份 indices 严格对应，不再另起取数链路（消除头部指标与表格不一致）。"""
+    market.clear_market_cache()
+    indices, _ = market.get_indices()
+    ov = market.get_market_overview(indices)
+    up = sum(1 for i in indices if i.get("涨跌幅", 0) > 0)
+    down = sum(1 for i in indices if i.get("涨跌幅", 0) < 0)
+    assert ov["up"] == up
+    assert ov["down"] == down
+    assert ov["flat"] == len(indices) - up - down
+    # 传入 indices 时不应再触发网络/mock 取数（source 由调用方提供，可为空串）
+    assert ov["indices"] is indices
+
+
+def test_market_overview_none_fetches_self(no_akshare):
+    """不传 indices 时仍自行取数（离线/mock 兜底），结构完整。"""
+    market.clear_market_cache()
+    ov = market.get_market_overview()
+    assert "indices" in ov and "source" in ov
+    assert ov["up"] + ov["down"] + ov["flat"] == len(ov["indices"])
+
+
+def test_format_change_pct():
+    """R2 精度一致性：固定 1 位小数（正带+ / 负带- / None 兜底 '-'），
+    此前 0 与 2.0 会丢失小数位（'+0%' / '+2%'），与 1.2 的 '+1.2%' 口径不一致。"""
+    assert market.format_change_pct(1.2) == "+1.2%"
+    assert market.format_change_pct(-0.34) == "-0.34%"
+    assert market.format_change_pct(0) == "+0.0%"
+    assert market.format_change_pct(2.0) == "+2.0%"
+    assert market.format_change_pct(None) == "-"
+
+
+def test_clear_all_caches(no_akshare):
+    """R1 新能力验证：clear_all_caches 一次性清空行情与资讯两类内部缓存。"""
+    market.clear_market_cache()
+    data_feed.clear_news_cache()
+    market.get_indices()  # 填行情缓存
+    data_feed.get_news()  # 填资讯缓存
+    assert market._MARKET_CACHE.get("indices") is not None
+    assert data_feed._NEWS_CACHE  # 非空
+    market.clear_all_caches()
+    assert market._MARKET_CACHE.get("indices") is None
+    assert not data_feed._NEWS_CACHE  # 资讯缓存一并清空
+
+
+def test_summarize_market_one_call(no_akshare):
+    """R1 新能力验证：summarize_market 一次取数同时给出概览 + 涨跌榜，
+    且概览与榜单基于同一份 indices（同源一致）。"""
+    market.clear_market_cache()
+    indices, _ = market.get_indices()
+    s = market.summarize_market(indices)
+    for k in ("up", "down", "flat", "source", "gainers", "losers", "flat_list"):
+        assert k in s
+    assert s["up"] + s["down"] + s["flat"] == len(indices)
+    if s["gainers"]:
+        assert s["gainers"][0]["涨跌幅"] >= 0  # 领涨在前
+    # 不传 indices 也能工作（自行取数）
+    s2 = market.summarize_market()
+    assert "gainers" in s2 and "up" in s2
+

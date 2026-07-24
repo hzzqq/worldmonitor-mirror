@@ -84,8 +84,7 @@ def main() -> None:
     if force_refresh:
         load_news.clear()
         load_indices.clear()
-        market.clear_market_cache()  # 清内部 TTL 缓存，否则 30s 内仍是旧数据
-        data_feed.clear_news_cache()  # 资讯模块级缓存同步清空，刷新才真正生效
+        market.clear_all_caches()  # 清空行情+资讯全部内部缓存，刷新才真正生效
     with st.spinner("正在聚合资讯..."):
         news_items, news_note = load_news()
 
@@ -236,22 +235,22 @@ def main() -> None:
             indices, idx_note = load_indices()
         st.info(idx_note)
 
-        # 涨跌平概览（来自 get_market_overview，便于一眼看多空）
-        ov = market.get_market_overview()
+        # 涨跌平概览 + 领涨/领跌榜（summarize_market 一次取数，保证同源一致）
+        summ_mkt = market.summarize_market(indices)
         oc1, oc2, oc3 = st.columns(3)
-        oc1.metric("上涨", ov["up"], help="涨跌幅 > 0 的指数数")
-        oc2.metric("下跌", ov["down"], help="涨跌幅 < 0 的指数数")
-        oc3.metric("平盘", ov["flat"], help="涨跌幅 = 0 的指数数")
+        oc1.metric("上涨", summ_mkt["up"], help="涨跌幅 > 0 的指数数")
+        oc2.metric("下跌", summ_mkt["down"], help="涨跌幅 < 0 的指数数")
+        oc3.metric("平盘", summ_mkt["flat"], help="涨跌幅 = 0 的指数数")
 
-        # 领涨 / 领跌榜（来自 get_top_movers，一眼看当日强弱方向）
-        movers = market.get_top_movers(indices)
+        # 领涨 / 领跌榜（来自 summarize_market，一眼看当日强弱方向）
+        movers = summ_mkt
         mg, ml = st.columns(2)
         with mg.expander("🔼 领涨 TOP3", expanded=False):
             for m in movers["gainers"]:
-                st.write(f"{m['名称']}　{m['涨跌幅']:+}%")
+                st.write(f"{m['名称']}　{market.format_change_pct(m['涨跌幅'])}")
         with ml.expander("🔻 领跌 TOP3", expanded=False):
             for m in movers["losers"]:
-                st.write(f"{m['名称']}　{m['涨跌幅']:+}%")
+                st.write(f"{m['名称']}　{market.format_change_pct(m['涨跌幅'])}")
 
         idf = pd.DataFrame(indices)
         if not idf.empty:

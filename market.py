@@ -58,6 +58,20 @@ def clear_market_cache() -> None:
     _MARKET_CACHE.clear()
 
 
+def clear_all_caches() -> None:
+    """一键清空行情与资讯的全部内部缓存（刷新场景的统一入口）。
+
+    R1 新能力：此前 app 刷新需分别调用 market.clear_market_cache() 与
+    data_feed.clear_news_cache()，新增缓存类型时容易漏清；现收敛为单一入口，
+    刷新只要调用它即可保证所有缓存被清空。延迟导入 data_feed 避免模块级
+    循环依赖（data_feed 不依赖 market，此处仅函数内导入保持解耦）。
+    """
+    clear_market_cache()
+    from data_feed import clear_news_cache
+
+    clear_news_cache()
+
+
 def _mock_indices() -> List[Dict]:
     """内置示例指数数据（离线兜底）。"""
     base = {
@@ -157,17 +171,40 @@ def get_indices(limit: "int | None" = None) -> Tuple[List[Dict], str]:
     return data, result[1]
 
 
-def get_market_overview() -> Dict:
+def get_market_overview(indices: "List[Dict] | None" = None) -> Dict:
     """聚合概览：指数列表 + 涨跌平统计 + 数据来源，便于看板头部展示。
 
     返回结构：
       {"indices": [...], "up": int, "down": int, "flat": int, "source": str}
+
+    R2 一致性修复（隐性双数据来源缺陷）：原实现每次都重新调用 get_indices()，
+    与看板已加载并展示的 `indices` 来自两条独立取数链路——当 `load_indices`
+    （Streamlit 缓存 600s）与 market 内部缓存（默认 30s）刷新时机不一致时，
+    头部「上涨/下跌/平盘」指标可能与下方指数表对不上。现允许调用方传入已加载的
+    `indices`，使概览与表格始终基于同一份数据；不传时仍自行拉取（离线/mock 兜底）。
     """
-    indices, source = get_indices()
+    source = ""
+    if indices is None:
+        indices, source = get_indices()
     up = sum(1 for i in indices if i.get("涨跌幅", 0) > 0)
     down = sum(1 for i in indices if i.get("涨跌幅", 0) < 0)
     flat = len(indices) - up - down
     return {"indices": indices, "up": up, "down": down, "flat": flat, "source": source}
+
+
+def format_change_pct(pct: "float | None") -> str:
+    """统一涨跌幅展示格式：正数带 +、负数带 -、None 兜底为 '-'。
+
+    R1 新能力：看板多处展示涨跌幅（指标卡 / 领涨领跌 / 个股），此前各自内联
+    f'{pct:+}%' 或 '0' 兜底，口径不一致；抽出纯函数保证全站统一且可单测。
+    """
+    if pct is None:
+        return "-"
+    s = f"{pct:+}"  # 保留原始精度：+1.2 / -0.34 / +0 / +2.0
+    # 整值（如 0、2.0）补 .0，保证与带小数展示口径一致（避免 +0% 这类不一致）
+    if "." not in s and "e" not in s and "E" not in s:
+        s += ".0"
+    return s + "%"
 
 
 def get_top_movers(indices: "List[Dict] | None" = None, top_n: int = 3) -> Dict:
@@ -187,6 +224,28 @@ def get_top_movers(indices: "List[Dict] | None" = None, top_n: int = 3) -> Dict:
         "gainers": ranked[:top_n],
         "losers": list(reversed(ranked[-top_n:])),
         "flat": [i for i in indices if i.get("涨跌幅", 0) == 0],
+    }
+
+
+def summarize_market(indices: "List[Dict] | None" = None) -> Dict:
+    """一站式市场概览：涨跌平统计 + 领涨/领跌榜，供看板头部一次性取数。
+
+    R1 新能力：看板此前分别调用 get_market_overview() 与 get_top_movers()，
+    逻辑分散且两次各自可能取数；这里合并为单入口，复用同一份 indices，
+    既减少调用面也保证「概览指标」与「涨跌榜」永远基于同一快照（R2 一致性）。
+    """
+    if indices is None:
+        indices, _ = get_indices()
+    ov = get_market_overview(indices)
+    movers = get_top_movers(indices)
+    return {
+        "up": ov["up"],
+        "down": ov["down"],
+        "flat": ov["flat"],
+        "source": ov["source"],
+        "gainers": movers["gainers"],
+        "losers": movers["losers"],
+        "flat_list": movers["flat"],
     }
 
 
