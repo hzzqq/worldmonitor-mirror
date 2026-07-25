@@ -212,18 +212,26 @@ def get_top_movers(indices: "List[Dict] | None" = None, top_n: int = 3) -> Dict:
 
     R1 新能力：从指数（或传入的行情列表）中分别取涨跌幅最高与最低的
     top_n 条，便于一眼看出当日强弱方向。
-    - gainers：按涨跌幅降序取前 top_n（领涨）
-    - losers：按涨跌幅升序取前 top_n（领跌）
+    - gainers：涨跌幅 > 0 的项，按降序取前 top_n（领涨）
+    - losers：涨跌幅 < 0 的项，按升序（最跌优先）取前 top_n（领跌）
     - flat：涨跌幅恰为 0 的项
     indices 为 None 时自动拉取 get_indices()（带缓存、离线走 mock）。
+
+    R2 修复（隐性正确性缺陷）：原实现 gainers=ranked[:top_n]、
+    losers=reversed(ranked[-top_n:])，当指数总数不多时两个切片会重叠——
+    涨跌幅恰好为 0 / 接近 0 的「中间项」既出现在领涨榜又出现在领跌榜，
+    看板出现同一条指数同时标红又标绿的矛盾。现改为按「正 / 负」严格分组，
+    两组天然互斥（正数与负数集合不相交），flat 单独列出，杜绝重叠。
     """
     if indices is None:
         indices, _ = get_indices()
     ranked = sorted(indices, key=lambda x: x.get("涨跌幅", 0), reverse=True)
+    pos = [i for i in ranked if i.get("涨跌幅", 0) > 0]   # 已降序
+    neg = [i for i in ranked if i.get("涨跌幅", 0) < 0]   # 已降序，反转后最跌在前
     return {
-        "gainers": ranked[:top_n],
-        "losers": list(reversed(ranked[-top_n:])),
-        "flat": [i for i in indices if i.get("涨跌幅", 0) == 0],
+        "gainers": pos[:top_n],
+        "losers": list(reversed(neg))[:top_n],
+        "flat": [i for i in ranked if i.get("涨跌幅", 0) == 0],
     }
 
 
@@ -247,6 +255,61 @@ def summarize_market(indices: "List[Dict] | None" = None) -> Dict:
         "losers": movers["losers"],
         "flat_list": movers["flat"],
     }
+
+
+# ---------------------------------------------------------------------------
+# 行情机读导出（与 data_feed 的 export_news_csv/json 对称，便于流水线消费）
+# ---------------------------------------------------------------------------
+_MARKET_FIELDS = ["名称", "代码", "最新价", "涨跌幅", "涨跌额", "成交量", "成交额"]
+
+
+def export_market_csv(indices: List[Dict]) -> str:
+    """把指数行情列表导出为 CSV 文本（表头 + 每行一条），供下游脚本 / 管线消费。
+
+    R1 新能力：此前指数行情只能在看板手动下载（依赖 pandas），缺少一个
+    不依赖 Streamlit / 前端、可单测的纯函数导出入口；与 data_feed 的
+    export_news_csv 对称，统一「资讯 / 行情」两类数据源的导出能力。
+    用 csv 模块引用包裹，避免标题 / 数值中含逗号或换行时破坏结构。
+    """
+    import csv
+    import io
+
+    buf = io.StringIO()
+    writer = csv.DictWriter(buf, fieldnames=_MARKET_FIELDS, extrasaction="ignore")
+    writer.writeheader()
+    for it in indices:
+        row = {k: it.get(k, "") for k in _MARKET_FIELDS}
+        writer.writerow(row)
+    return buf.getvalue()
+
+
+def export_market_json(indices: List[Dict]) -> str:
+    """把指数行情列表导出为 JSON 文本（机读，便于程序化消费 / 迁移）。
+
+    R1 新能力：与 export_market_csv 互补——CSV 利于表格工具，JSON 利于
+    程序消费。对所有字段做 `float` 规整（None / 非数回退 0.0），保证
+    下游 json.loads 稳定、不出现 null 干扰统计。
+    """
+    import json as _json
+
+    def _num(v):
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return 0.0
+
+    out = []
+    for it in indices:
+        out.append({
+            "名称": it.get("名称", ""),
+            "代码": it.get("代码", ""),
+            "最新价": _num(it.get("最新价")),
+            "涨跌幅": _num(it.get("涨跌幅")),
+            "涨跌额": _num(it.get("涨跌额")),
+            "成交量": _num(it.get("成交量")),
+            "成交额": _num(it.get("成交额")),
+        })
+    return _json.dumps(out, ensure_ascii=False, indent=2)
 
 
 # ---------------------------------------------------------------------------

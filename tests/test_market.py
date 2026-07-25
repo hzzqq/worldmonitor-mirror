@@ -258,3 +258,40 @@ def test_summarize_market_one_call(no_akshare):
     s2 = market.summarize_market()
     assert "gainers" in s2 and "up" in s2
 
+
+
+def test_get_top_movers_gainers_losers_disjoint(no_akshare):
+    """R2 验证：领涨榜与领跌榜严格按正/负分组，互不相交（中间项不重复出现）。"""
+    market.clear_market_cache()
+    indices, _ = market.get_indices()
+    movers = market.get_top_movers(indices, top_n=3)
+    gain_codes = {i["代码"] for i in movers["gainers"]}
+    loss_codes = {i["代码"] for i in movers["losers"]}
+    # 两组代码集合不应相交
+    assert gain_codes.isdisjoint(loss_codes)
+    # 领涨项涨跌幅必须 > 0，领跌项必须 < 0
+    for g in movers["gainers"]:
+        assert g["涨跌幅"] > 0
+    for l in movers["losers"]:
+        assert l["涨跌幅"] < 0
+    # 平盘项涨跌幅恰为 0
+    for f in movers["flat"]:
+        assert f["涨跌幅"] == 0
+
+
+def test_export_market_csv_and_json(no_akshare):
+    """R1 验证：export_market_csv / export_market_json 产出结构正确、可解析。"""
+    market.clear_market_cache()
+    indices, _ = market.get_indices()
+    csv_text = market.export_market_csv(indices)
+    lines = csv_text.strip().splitlines()
+    assert lines[0] == "名称,代码,最新价,涨跌幅,涨跌额,成交量,成交额"
+    assert len(lines) == len(indices) + 1  # 表头 + 每行一条
+
+    json_text = market.export_market_json(indices)
+    data = __import__("json").loads(json_text)
+    assert isinstance(data, list) and len(data) == len(indices)
+    # 数值字段被规整为 float（无 null），便于下游消费
+    for row in data:
+        assert isinstance(row["最新价"], float)
+        assert isinstance(row["涨跌幅"], float)
