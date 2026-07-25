@@ -37,6 +37,43 @@ def test_sentiment_tie_favors_neutral():
     assert data_feed.classify_sentiment("突破 风险") == "中性"
 
 
+def test_sentiment_non_str_none():
+    # R2 修复验证：None 不应抛 AttributeError，应安全归入中性
+    assert data_feed.classify_sentiment(None) == "中性"
+
+
+def test_sentiment_non_str_int():
+    # R2 修复验证：非字符串数字兜底为 str 后判定（此处无情绪词→中性）
+    assert data_feed.classify_sentiment(20240501) == "中性"
+
+
+def test_sentiment_counts_breakdown():
+    # R1 新能力验证：按情绪聚合计数且 total 正确
+    news = [
+        {"title": "国产大模型开源突破", "summary": "", "source": "a"},
+        {"title": "新能源车企亏损下跌", "summary": "", "source": "b"},
+        {"title": "今日例行会议", "summary": "", "source": "a"},
+        {"title": None, "summary": "", "source": "c"},  # 非 str 字段不崩溃
+    ]
+    c = data_feed.sentiment_counts(news)
+    assert c["正面"] == 1
+    assert c["负面"] == 1
+    assert c["中性"] == 2
+    assert c["total"] == 4
+
+
+def test_summarize_news_reuses_sentiment_counts():
+    # R3 DRY 验证：summarize_news 的情绪口径与 sentiment_counts 一致
+    news = [
+        {"title": "利好", "summary": "", "source": "a"},
+        {"title": "利空", "summary": "", "source": "b"},
+    ]
+    s = data_feed.summarize_news(news)
+    assert s["by_sentiment"]["正面"] == 1
+    assert s["by_sentiment"]["负面"] == 1
+    assert s["total"] == 2
+
+
 def test_get_news_returns_list():
     # get_news 离线应回退 mock，返回 (list, str)
     news, note = data_feed.get_news()

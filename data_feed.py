@@ -109,11 +109,19 @@ def _count_word_matches(query: str, text: str) -> int:
     return len(pat.findall(text))
 
 
-def classify_sentiment(text: str) -> str:
+def classify_sentiment(text) -> str:
     """基于关键词命中判断情绪：正面 / 负面 / 中性。
 
     命中规则：取正面与负面词命中数量较多者；若均未命中则为中性。
+
+    R2 修复（隐性类型健壮性缺陷）：原签名与实现假定 `text` 必为 str，但
+    上游 `build_dataframe` / `summarize_news` 经 `_news_text` 取字段，当标题或
+    摘要意外是非字符串（None / 数字 / 畸形对象）时，`text.lower()` 会抛
+    AttributeError 直接中断看板渲染。现对「非 str」做兜底归一（None→空串，
+    其余转 str），保证情绪判定永不因字段类型异常而崩溃。
     """
+    if not isinstance(text, str):
+        text = "" if text is None else str(text)
     if not text:
         return "中性"
     low = text.lower()
@@ -794,22 +802,39 @@ def group_by_source(news: List[Dict]) -> Dict[str, List[Dict]]:
     return groups
 
 
+def sentiment_counts(news: List[Dict]) -> Dict:
+    """统计资讯的情绪分布：{"正面": n, "负面": n, "中性": n, "total": n}。
+
+    R1 新能力：此前看板只在 `summarize_news` 里内联做了一遍情绪计数，
+    无法被其它调用方（CLI 汇总、单测、导出）复用。抽成独立纯函数后，
+    `summarize_news` 与其余入口可共享同一套计数口径，也更易单测。
+    非字符串字段经 `classify_sentiment` 内部兜底，不会中断。
+    """
+    counts = {"正面": 0, "负面": 0, "中性": 0, "total": 0}
+    for n in news:
+        counts[classify_sentiment(_news_text(n))] = counts.get(
+            classify_sentiment(_news_text(n)), 0
+        ) + 1
+        counts["total"] += 1
+    return counts
+
+
 def summarize_news(news: List[Dict]) -> Dict:
     """聚合统计：总量、按来源计数、按情绪计数，供看板做概览指标。
 
     返回结构：
       {"total": int, "by_source": {src: n}, "by_sentiment": {"正面":..,"负面":..,"中性":..}}
     纯统计、无副作用，便于在 UI 顶部以 metric 形式呈现「舆情分布」。
+
+    R3 去重（DRY）：情绪计数逻辑收敛到 `sentiment_counts`，避免统计口径
+    在多处散落、未来一处改了另一处漏改导致「概览指标」与「列表情绪」对不上。
     """
     from collections import Counter
 
     by_source: Counter = Counter()
-    by_sent = {"正面": 0, "负面": 0, "中性": 0}
     for n in news:
         by_source[n.get("source", "")] += 1
-        text = _news_text(n)
-        s = classify_sentiment(text)
-        by_sent[s] = by_sent.get(s, 0) + 1
+    by_sent = {k: v for k, v in sentiment_counts(news).items() if k != "total"}
     return {
         "total": len(news),
         "by_source": dict(by_source),
