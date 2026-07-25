@@ -23,6 +23,7 @@ import csv
 import datetime as _dt
 import difflib
 import json
+import logging
 import os
 import re
 import time
@@ -30,10 +31,25 @@ from typing import Dict, List, Tuple
 
 import requests
 
+from log_utils import setup_logging
+
+log = logging.getLogger("worldmonitor")
+
 try:  # feedparser 为可选依赖，缺失时 RSS 源走 mock
     import feedparser
 except Exception:  # pragma: no cover
     feedparser = None
+
+# R1 新能力：诊断日志（抓取失败/汇总）写 stderr 或 WORLDMONITOR_LOG_FILE，
+# 级别由 WORLDMONITOR_LOG_LEVEL 控制；默认 INFO。抓取失败除在 UI 提示外，
+# 同时落日志便于后台/定时运行排障。
+try:
+    setup_logging(
+        os.getenv("WORLDMONITOR_LOG_LEVEL", "INFO"),
+        os.getenv("WORLDMONITOR_LOG_FILE"),
+    )
+except Exception:
+    pass
 
 
 # ---------------------------------------------------------------------------
@@ -609,6 +625,7 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
     hours：时间窗口过滤（仅保留最近 N 小时资讯），None / <=0 表示不过滤。
     """
     cache_key = "news"
+    log.info("开始聚合资讯 force_refresh=%s source=%s sentiment=%s hours=%s", force_refresh, source, sentiment, hours)
     if not force_refresh:
         cached = _news_cache_get(cache_key)
         if cached is not None:
@@ -632,6 +649,7 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
         notes.append(f"Hacker News {len(hn)} 条")
     except Exception as exc:  # 网络/解析失败 -> 提示但不崩溃
         notes.append(f"Hacker News 抓取失败（{type(exc).__name__}），已跳过")
+        log.warning("Hacker News 抓取失败：%s", exc)
 
     # 2) RSS 源
     for name, url in RSS_SOURCES.items():
@@ -641,6 +659,7 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
             notes.append(f"{name} {len(items)} 条")
         except Exception as exc:
             notes.append(f"{name} 抓取失败（{type(exc).__name__}），已跳过")
+            log.warning("%s 抓取失败：%s", name, exc)
 
     # 3) 兜底：若全部失败则使用 mock
     if not collected:
@@ -662,6 +681,7 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
     collected = _apply_news_filters(collected, source, sentiment, keywords, hours)
     if limit is not None and limit >= 0:
         collected = collected[:limit]
+    log.info("资讯聚合完成 条数=%d 说明=%s", len(collected), notes_str)
     return list(collected), notes_str
 
 

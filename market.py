@@ -20,9 +20,14 @@ from __future__ import annotations
 
 import datetime as _dt
 import hashlib
+import logging
 import os
 import time
 from typing import Dict, List, Tuple
+
+from log_utils import setup_logging
+
+log = logging.getLogger("worldmonitor")
 
 
 # 常见 A 股指数（用于 mock 与 akshare 过滤）
@@ -145,10 +150,12 @@ def get_indices(limit: "int | None" = None) -> Tuple[List[Dict], str]:
             return data, note
         return data[:limit], note
     try:
+        log.info("开始获取 A 股指数行情(akshare)")
         data = _get_via_akshare()
         if data:
             result = (data, "数据来源：akshare（东方财富实时行情）")
             _cache_set("indices", result)
+            log.info("A 股指数行情获取完成 条数=%d", len(data))
             data = sorted(data, key=lambda x: x.get("涨跌幅", 0), reverse=True)
             if limit is not None and limit >= 0:
                 data = data[:limit]
@@ -157,6 +164,7 @@ def get_indices(limit: "int | None" = None) -> Tuple[List[Dict], str]:
         result = _mock_indices(), (
             f"⚠️ akshare 抓取失败（{type(exc).__name__}），已回退内置示例数据（离线模式）"
         )
+        log.warning("akshare 指数行情抓取失败：%s", exc)
         _cache_set("indices", result)
         data = sorted(result[0], key=lambda x: x.get("涨跌幅", 0), reverse=True)
         if limit is not None and limit >= 0:
