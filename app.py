@@ -21,6 +21,7 @@ import streamlit as st
 
 import data_feed
 import market
+from app_helpers import build_dataframe, highlight_keyword, trending_chart_data
 
 
 # ---------------------------------------------------------------------------
@@ -39,32 +40,6 @@ def load_news() -> tuple[list[dict], str]:
 @st.cache_data(ttl=REFRESH_TTL)
 def load_indices() -> tuple[list[dict], str]:
     return market.get_indices()
-
-
-def highlight_keyword(title: str, keyword: str) -> str:
-    """在标题中高亮命中的关键词（忽略大小写），用于资讯列表。"""
-    if not keyword:
-        return title
-    import re as _re
-
-    return _re.sub(f"(?i)({_re.escape(keyword)})", r"**\1**", title)
-
-
-def build_dataframe(items: list[dict]) -> pd.DataFrame:
-    rows = []
-    for it in items:
-        pub = it.get("published") or _dt.datetime.now()
-        text = f"{it.get('title', '')} {it.get('summary', '')}"
-        rows.append({
-            "标题": it.get("title", ""),
-            "来源": it.get("source", ""),
-            "链接": it.get("link", ""),
-            "发布时间": pub,
-            "日期": pub.date() if isinstance(pub, _dt.datetime) else None,
-            "小时": pub.hour if isinstance(pub, _dt.datetime) else 0,
-            "情绪": data_feed.classify_sentiment(text),
-        })
-    return pd.DataFrame(rows)
 
 
 def main() -> None:
@@ -212,6 +187,13 @@ def main() -> None:
                 )
                 fig_trend.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=320)
                 st.plotly_chart(fig_trend, use_container_width=True)
+
+            # 图5：热门话题（基于后端 trending_keywords，c111 已提供但此前未在看板落地）
+            trend_df = trending_chart_data(time_filtered, top_k=12)
+            if not trend_df.empty:
+                fig_tr = px.bar(trend_df, x="关键词", y="次数", title="热门话题 TOP12", color="次数")
+                fig_tr.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=320)
+                st.plotly_chart(fig_tr, use_container_width=True)
 
         # 资讯列表
         st.divider()
