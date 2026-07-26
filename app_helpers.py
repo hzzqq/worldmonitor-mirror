@@ -73,3 +73,52 @@ def trending_chart_data(items: list, top_k: int = 10) -> "pd.DataFrame":
     """
     pairs = data_feed.trending_keywords(items, top_k=top_k)
     return pd.DataFrame(pairs, columns=["关键词", "次数"])
+
+
+def paginate_dataframe(df: "pd.DataFrame", page: int = 1, page_size: int = 10) -> "tuple[pd.DataFrame, dict]":
+    """对看板 DataFrame 做内存分页，返回 (当期页 DataFrame, 分页元数据)。
+
+    R1 新能力：资讯量大时无需一次性渲染全部，按页加载（与 openwebui-lite
+    会话消息分页、data_feed.paginate_news 思路一致）。
+    R2 隐性健壮性：page / page_size 非正或非法时回退默认（1 / 10），
+    超出范围被夹到最后一页而非抛错或返回空（避免调用方传 0 / 负数导致
+    切片异常或空结果）。
+    """
+    page = page if isinstance(page, int) and page > 0 else 1
+    page_size = page_size if isinstance(page_size, int) and page_size > 0 else 10
+    total = len(df)
+    pages = max(1, (total + page_size - 1) // page_size) if total else 1
+    page = min(page, pages)
+    start = (page - 1) * page_size
+    page_df = df.iloc[start:start + page_size]
+    meta = {
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "pages": pages,
+    }
+    return page_df, meta
+
+
+def search_and_paginate(news_items: list, query: str = "", page: int = 1,
+                        page_size: int = 10, source: str = None,
+                        sentiment: str = None, hours: "int | float | None" = None) -> dict:
+    """组合「检索 + 分页」的看板入口（便于前端一次性拿到展示子集与分页元数据）。
+
+    R1 新能力：把 data_feed.search_news 与 paginate_news 收敛为一个看板调用，
+    减少 app.py 编排重复。
+    R2 一致性修复（隐性 UX 缺陷）：data_feed.search_news 在空查询时返回 []，
+    若前端直接拿它渲染，会导致「搜索框清空 = 整页空白」，用户误以为数据丢失。
+    这里对空查询短路为「不做检索、展示全部」，再分页——空搜索应等价于
+    「浏览全部资讯」，而非「零结果」。source/sentiment/hours 过滤与检索叠加。
+    """
+    if query and query.strip():
+        base = data_feed.search_news(
+            query, news_items, source=source, sentiment=sentiment, hours=hours
+        )
+    else:
+        # R2：空查询 → 展示全部（不调用 search_news，避免返回空列表）
+        base = list(news_items)
+    paginated = data_feed.paginate_news(base, page=page, page_size=page_size)
+    paginated["query"] = query or ""
+    return paginated

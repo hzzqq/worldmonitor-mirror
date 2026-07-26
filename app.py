@@ -21,7 +21,7 @@ import streamlit as st
 
 import data_feed
 import market
-from app_helpers import build_dataframe, highlight_keyword, trending_chart_data
+from app_helpers import build_dataframe, highlight_keyword, trending_chart_data, search_and_paginate
 
 
 # ---------------------------------------------------------------------------
@@ -112,9 +112,16 @@ def main() -> None:
             key="news_search",
         )
         if search_q:
-            matches = data_feed.search_news(search_q, news_items)
-            st.success(f"检索「{search_q}」命中 {len(matches)} 条")
-            for m in matches:
+            # R1 新能力：检索结果分页（资讯量大时按页浏览，而非一次性铺满整屏）
+            # R2 一致性：search_and_paginate 对空查询短路为「展示全部」，
+            # 避免 search 清空时整页空白；这里 search_q 非空才进入此分支。
+            page = st.number_input("检索结果页码", min_value=1, value=1, step=1,
+                                    key="search_page")
+            res = search_and_paginate(news_items, query=search_q, page=int(page),
+                                      page_size=10)
+            st.success(f"检索「{search_q}」命中 {res['total']} 条"
+                       f"（第 {res['page']}/{res['pages']} 页）")
+            for m in res["items"]:
                 mtext = f"{m.get('title', '')} {m.get('summary', '')}"
                 emoji = {"正面": "🟢", "负面": "🔴", "中性": "⚪"}.get(
                     data_feed.classify_sentiment(mtext), "⚪"

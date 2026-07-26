@@ -86,3 +86,39 @@ def test_trending_chart_data_shape():
     assert list(df.columns) == ["关键词", "次数"]
     assert len(df) > 0
     assert (df["次数"] > 0).all()
+
+
+def test_paginate_dataframe_pages_and_clamps():
+    """R1 新需求验证：paginate_dataframe 正确分页，且非正参数被夹到默认。"""
+    import pandas as pd
+    df = pd.DataFrame({"a": list(range(25))})
+    page_df, meta = ah.paginate_dataframe(df, page=1, page_size=10)
+    assert len(page_df) == 10
+    assert meta["total"] == 25 and meta["pages"] == 3
+    # 超出范围夹到最后一页
+    page_df2, meta2 = ah.paginate_dataframe(df, page=99, page_size=10)
+    assert meta2["page"] == 3
+    # 非正参数回退默认
+    _, meta3 = ah.paginate_dataframe(df, page=0, page_size=-5)
+    assert meta3["page"] == 1 and meta3["page_size"] == 10
+
+
+def test_search_and_paginate_empty_query_shows_all():
+    """R2 一致性验证：空查询应展示全部（而非 search_news 的空列表），再分页。"""
+    news = [
+        {"title": "人工智能 突破", "summary": "x", "source": "S",
+         "link": "l", "published": "2024-01-01T00:00:00"},
+        {"title": "开源 大模型", "summary": "y", "source": "S",
+         "link": "l", "published": "2024-01-01T00:00:00"},
+        {"title": "股市 下跌", "summary": "z", "source": "S",
+         "link": "l", "published": "2024-01-01T00:00:00"},
+    ]
+    # 空查询 -> 展示全部（3 条），分页取第 1 页 2 条
+    res = ah.search_and_paginate(news, query="", page=1, page_size=2)
+    assert res["total"] == 3
+    assert len(res["items"]) == 2
+    assert res["pages"] == 2
+    # 有查询 -> 命中相关条目（按词边界匹配）
+    res2 = ah.search_and_paginate(news, query="人工智能", page=1, page_size=10)
+    assert res2["total"] == 1
+    assert res2["items"][0]["title"] == "人工智能 突破"

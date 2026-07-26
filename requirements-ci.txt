@@ -1,0 +1,6 @@
+# 最小化 CI 测试依赖（仅运行 pytest 套件所需）
+# data_feed 顶层依赖 requests；app_helpers 依赖 pandas（标准库之外的仅此两项）。
+# feedparser / streamlit / plotly / akshare 为可选或在测试中 mock，不纳入。
+pytest>=8.0
+requests>=2.31
+pandas>=2.0
