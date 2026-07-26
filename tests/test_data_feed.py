@@ -413,6 +413,30 @@ def test_export_news_markdown_empty():
     assert "无资讯" in md
 
 
+def test_export_news_html_format():
+    """R1 新需求验证：export_news_html 输出独立 HTML 文档，含标题链接与情绪。"""
+    news = [
+        {"title": "A公司<开源>突破", "link": "http://x?a=1&b=2", "source": "S",
+         "published": "2024-01-01", "summary": "开源 突破"},
+        {"title": "B平台遭攻击", "link": "http://y", "source": "S2",
+         "published": "2024-01-02", "summary": "攻击 风险"},
+    ]
+    html = data_feed.export_news_html(news)
+    assert html.startswith("<!DOCTYPE html>")
+    assert "<html" in html and "</html>" in html
+    # R2 安全：标题中的 < > 与链接中的 & 必须被转义，不能原样注入
+    assert "&lt;开源&gt;" in html
+    assert "http://x?a=1&amp;b=2" in html
+    assert "情绪：正面" in html
+
+
+def test_export_news_html_empty():
+    """空列表不应崩溃，给出友好占位。"""
+    html = data_feed.export_news_html([])
+    assert "无资讯" in html
+    assert "</html>" in html
+
+
 def test_get_news_does_not_alias_cache(monkeypatch):
     """R2 隐性问题验证：修改 get_news 返回值不应污染模块缓存。"""
     _force_mock(monkeypatch)

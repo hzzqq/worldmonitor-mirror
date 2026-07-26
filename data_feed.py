@@ -744,6 +744,42 @@ def export_news_markdown(news: List[Dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def export_news_html(news: List[Dict]) -> str:
+    """把资讯列表序列化为独立 HTML 文档（人读 / 单文件分享），与 CSV/JSON/MD 互补。
+
+    R1 新能力：HTML 便于直接浏览器打开、贴进富文本或存档；每条含标题（链接）、
+    来源、时间、情绪标签。所有用户文本经 HTML 转义，避免标题/来源中的特殊字符
+    破坏结构或被注入（R2 安全）。
+    """
+    def esc(s):
+        return (str(s).replace("&", "&amp;").replace("<", "&lt;")
+                .replace(">", "&gt;").replace('"', "&quot;"))
+
+    parts = ['<!DOCTYPE html>', '<html lang="zh-CN">', '<head>',
+             '<meta charset="utf-8">', '<title>资讯导出</title>', '</head>',
+             '<body>', '<h1>资讯导出</h1>']
+    if not news:
+        parts.append('<p>（无资讯）</p>')
+    else:
+        parts.append('<ul>')
+        for n in news:
+            title = n.get("title", "(无标题)")
+            link = n.get("link", "")
+            source = n.get("source", "")
+            published = n.get("published")
+            pub = published.isoformat() if isinstance(published, _dt.datetime) else str(published or "")
+            text = _news_text(n)
+            sentiment = classify_sentiment(text)
+            title_html = f'<a href="{esc(link)}">{esc(title)}</a>' if link else esc(title)
+            parts.append(
+                f'<li>{title_html}<br><small>来源：{esc(source)}　时间：{esc(pub)}'
+                f'　情绪：{esc(sentiment)}</small></li>'
+            )
+        parts.append('</ul>')
+    parts.append('</body></html>')
+    return "\n".join(parts) + "\n"
+
+
 # 趋势词停用词表（极简，避免高频虚词污染「热门话题」）
 _STOPWORDS = {
     "的", "了", "和", "与", "在", "是", "为", "对", "及", "等", "也", "并",

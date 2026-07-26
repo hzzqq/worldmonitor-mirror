@@ -117,8 +117,16 @@ def search_and_paginate(news_items: list, query: str = "", page: int = 1,
             query, news_items, source=source, sentiment=sentiment, hours=hours
         )
     else:
-        # R2：空查询 → 展示全部（不调用 search_news，避免返回空列表）
+        # R2 修复：空查询也必须应用 source/sentiment/hours 过滤，否则
+        # 「只按来源/情绪/时间筛选、不输入关键词」时这些过滤被整段丢弃，
+        # 导致筛选下拉失效（返回全量）。复用 data_feed 的纯函数过滤链。
         base = list(news_items)
+        if source:
+            base = data_feed.filter_news_by_source(base, source)
+        if sentiment:
+            base = data_feed.filter_news_by_sentiment(base, sentiment)
+        if hours:
+            base = data_feed.filter_news_by_time(base, hours)
     paginated = data_feed.paginate_news(base, page=page, page_size=page_size)
     paginated["query"] = query or ""
     return paginated

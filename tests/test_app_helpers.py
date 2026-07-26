@@ -122,3 +122,22 @@ def test_search_and_paginate_empty_query_shows_all():
     res2 = ah.search_and_paginate(news, query="人工智能", page=1, page_size=10)
     assert res2["total"] == 1
     assert res2["items"][0]["title"] == "人工智能 突破"
+
+
+def test_search_and_paginate_empty_query_still_filters_source():
+    """R2 修复验证：空查询也必须应用 source 过滤，不能整段丢弃筛选条件。
+
+    此前空查询分支直接 list(news_items) 跳过了 source/sentiment/hours 过滤，
+    导致「仅按来源筛选、不输入关键词」时筛选失效（返回全量）。
+    """
+    news = [
+        {"title": "A", "summary": "x", "source": "S1", "link": "l",
+         "published": "2024-01-01T00:00:00"},
+        {"title": "B", "summary": "y", "source": "S2", "link": "l",
+         "published": "2024-01-01T00:00:00"},
+        {"title": "C", "summary": "z", "source": "S1", "link": "l",
+         "published": "2024-01-01T00:00:00"},
+    ]
+    res = ah.search_and_paginate(news, query="", source="S1", page=1, page_size=10)
+    assert res["total"] == 2
+    assert all(it["source"] == "S1" for it in res["items"])
