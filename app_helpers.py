@@ -75,6 +75,17 @@ def trending_chart_data(items: list, top_k: int = 10) -> "pd.DataFrame":
     return pd.DataFrame(pairs, columns=["关键词", "次数"])
 
 
+def hourly_chart_data(news_items: list, window_hours: int = 24) -> "pd.DataFrame":
+    """返回最近 window_hours 个小时桶的发布量 DataFrame（时段, 条数），供柱状图。
+
+    R1（暴露后端能力）：data_feed.news_by_hour（按小时分布）此前未在看板落地，
+    用户看不到资讯在一天内的集中发布时段。这里把它转成图表数据，与
+    trending_chart_data 对称（均由后端纯函数驱动、便于单测）。
+    """
+    pairs = data_feed.news_by_hour(news_items, window_hours=window_hours)
+    return pd.DataFrame(pairs, columns=["时段", "条数"])
+
+
 def paginate_dataframe(df: "pd.DataFrame", page: int = 1, page_size: int = 10) -> "tuple[pd.DataFrame, dict]":
     """对看板 DataFrame 做内存分页，返回 (当期页 DataFrame, 分页元数据)。
 

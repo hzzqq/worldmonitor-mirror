@@ -786,8 +786,12 @@ def test_trending_keywords_filters_stopwords_and_short():
 
 
 def test_trending_keywords_top_k_limits():
-    """top_k 应截断返回数量。"""
-    news = [{"title": f"词{i} 句{i}", "summary": "", "source": "S", "link": str(i)} for i in range(20)]
+    """top_k 应截断返回数量。
+
+    用字母词（word{i}/item{i}）做填充，避免依赖纯数字 token——
+    纯数字（如 0/1）已被 R2 修复排除出趋势榜，不应再作为填充。
+    """
+    news = [{"title": f"word{i} item{i}", "summary": "", "source": "S", "link": str(i)} for i in range(20)]
     kw = data_feed.trending_keywords(news, top_k=5)
     assert len(kw) == 5
 
@@ -930,4 +934,35 @@ def test_dedup_similar_no_mutate_input():
     before = list(news)
     data_feed.dedup_similar_news(news, threshold=0.85)
     assert news == before
+
+
+def test_news_by_hour_buckets_and_window():
+    """R1 验证：news_by_hour 返回 window_hours 个整点桶，标签为 HH:00，计数正确。"""
+    now = _dt.datetime.now().replace(minute=0, second=0, microsecond=0)
+    news = [
+        {"title": "a", "published": now},
+        {"title": "b", "published": now - _dt.timedelta(hours=1)},
+        {"title": "c", "published": now - _dt.timedelta(hours=1)},
+        {"title": "old", "published": now - _dt.timedelta(hours=50)},  # 窗口外忽略
+        {"title": "no_time", "published": "not-a-date"},             # 非 datetime 忽略
+    ]
+    pairs = data_feed.news_by_hour(news, window_hours=24)
+    assert len(pairs) == 24
+    assert all(l.endswith(":00") for l, _ in pairs)
+    # 仅 2 个桶非空：当前桶 1 条、上一桶 2 条（与 now 的分钟无关，断言稳健）
+    nonzero = [(l, c) for l, c in pairs if c > 0]
+    assert len(nonzero) == 2
+    assert sorted(c for _, c in nonzero) == [1, 2]
+    assert sum(c for _, c in pairs) == 3
+
+
+def test_trending_keywords_skips_pure_numeric():
+    """R2 验证：trending_keywords 不应把纯数字 token（如 2024）当热门关键词。"""
+    news = [{"title": "2024 年大模型突破 增长", "summary": "突破 增长 2023"}]
+    kws = [w for w, _ in data_feed.trending_keywords(news, top_k=10)]
+    assert "2024" not in kws
+    assert "2023" not in kws
+    # 真实关键词仍被统计
+    assert "突破" in kws
+    assert "增长" in kws
 

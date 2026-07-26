@@ -141,3 +141,16 @@ def test_search_and_paginate_empty_query_still_filters_source():
     res = ah.search_and_paginate(news, query="", source="S1", page=1, page_size=10)
     assert res["total"] == 2
     assert all(it["source"] == "S1" for it in res["items"])
+
+
+def test_hourly_chart_data_shape():
+    """R1 验证：hourly_chart_data 返回 时段/条数 两列 DataFrame，桶数=window_hours。"""
+    now = _dt.datetime.now().replace(minute=0, second=0, microsecond=0)
+    news = [
+        {"title": "a", "published": now},
+        {"title": "b", "published": now - _dt.timedelta(hours=2)},
+    ]
+    df = ah.hourly_chart_data(news, window_hours=24)
+    assert list(df.columns) == ["时段", "条数"]
+    assert len(df) == 24
+    assert df["条数"].sum() == 2

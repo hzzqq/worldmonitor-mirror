@@ -818,6 +818,11 @@ def trending_keywords(news: List[Dict], top_k: int = 10, min_len: int = 2,
         text = _news_text(n).lower()
         # 英文 / 数字词
         for w in re.findall(r"[a-z0-9]+", text):
+            # R2 修复（隐性噪声缺陷）：纯数字 token（如 "2024" / "2023"）此前
+            # 会被当作热门关键词计入趋势榜，污染「热门话题」图表、稀释真正有意义的
+            # 词。年份 / 数字串不具备话题语义，这里整体跳过纯数字 token。
+            if w.isdigit():
+                continue
             if len(w) >= min_len and w not in _STOPWORDS:
                 counter[w] += 1
         # 中文：CJK 连续段按 n 元语法（2..max_ngram）切分
@@ -856,6 +861,43 @@ def group_by_source(news: List[Dict]) -> Dict[str, List[Dict]]:
         key = n.get("source", "") or ""
         groups.setdefault(key, []).append(n)
     return groups
+
+
+def news_by_hour(news: List[Dict], window_hours: int = 24) -> List[Tuple[str, int]]:
+    """统计最近 window_hours 个整点桶内每个小时的资讯发布量，供看板「发布时间分布」图。
+
+    R1 新需求：看板已有「按天时间线」与「情绪趋势（按天）」，但缺少更细的
+    「按小时分布」，难以观察资讯在一天内的集中发布时段（如开盘 / 收盘前后、
+    夜间突发事件）。这里生成最近 window_hours 个小时桶的发布计数，含 0 桶，
+    保证图表连续、不丢时段。
+
+    - 返回 [(时段标签, 条数), ...] 按时间升序（最旧桶在前），共 window_hours 个桶；
+    - 时段标签形如 "14:00"（本地时钟整点）；
+    - 无 published（非 datetime）的条目保守跳过，避免把缺时间的数据错算进某桶；
+    - 带时区的 published 统一去 tzinfo 后再分桶，避免 naive/aware 比较抛 TypeError；
+    - 落在窗口之前的旧资讯忽略，窗口内的归入对应整点桶；不修改入参，纯函数可单测。
+    """
+    if window_hours <= 0:
+        window_hours = 24
+    now = _dt.datetime.now().replace(minute=0, second=0, microsecond=0)
+    base = now - _dt.timedelta(hours=window_hours - 1)  # 最早桶起点（整点）
+    counts = [0] * window_hours
+    for n in news:
+        pub = n.get("published")
+        if not isinstance(pub, _dt.datetime):
+            continue  # 缺时间信息：保守跳过
+        try:
+            if getattr(pub, "tzinfo", None) is not None:
+                pub = pub.replace(tzinfo=None)
+        except Exception:
+            continue
+        if pub < base:  # 早于窗口起点：忽略
+            continue
+        delta_h = int((pub - base).total_seconds() // 3600)
+        if 0 <= delta_h < window_hours:
+            counts[delta_h] += 1
+    return [( (base + _dt.timedelta(hours=h)).strftime("%H:00"), counts[h] )
+            for h in range(window_hours) ]
 
 
 def sentiment_counts(news: List[Dict]) -> Dict:

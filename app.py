@@ -21,7 +21,7 @@ import streamlit as st
 
 import data_feed
 import market
-from app_helpers import build_dataframe, highlight_keyword, trending_chart_data, search_and_paginate
+from app_helpers import build_dataframe, highlight_keyword, trending_chart_data, hourly_chart_data, search_and_paginate
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +201,16 @@ def main() -> None:
                 fig_tr = px.bar(trend_df, x="关键词", y="次数", title="热门话题 TOP12", color="次数")
                 fig_tr.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=320)
                 st.plotly_chart(fig_tr, use_container_width=True)
+
+            # 图5b：发布时间分布（按小时，基于后端 news_by_hour）
+            hourly_df = hourly_chart_data(time_filtered, window_hours=24)
+            if not hourly_df.empty:
+                fig_hr = px.bar(
+                    hourly_df, x="时段", y="条数",
+                    title="资讯发布时间分布（近 24 小时·按小时）", color="条数",
+                )
+                fig_hr.update_layout(margin=dict(l=20, r=20, t=40, b=20), height=320)
+                st.plotly_chart(fig_hr, use_container_width=True)
 
         # 资讯列表
         st.divider()
