@@ -66,6 +66,21 @@ def main() -> None:
     st.sidebar.info(news_note)
     st.sidebar.caption(f"本地展示时间：{_dt.datetime.now():%Y-%m-%d %H:%M:%S}")
 
+    # ---- 数据健康态（R1 监控可观测性：哪些源失败 / 是否离线 / 上次抓取） ----
+    health = data_feed.get_news_health()
+    if health.get("fetched_at"):
+        st.sidebar.caption(f"🕓 上次抓取：{health['fetched_at']}")
+    if health.get("offline"):
+        st.sidebar.error("⚠️ 全部资讯源抓取失败，当前展示内置示例数据（离线模式）")
+    elif health.get("any_failed"):
+        st.sidebar.warning("部分资讯源抓取失败，数据可能不完整")
+    failed = [s for s in health.get("sources", []) if not s["ok"]]
+    for s in failed:
+        st.sidebar.caption(f"❌ {s['source']}：{s.get('error') or '失败'}")
+    ok = [s for s in health.get("sources", []) if s["ok"]]
+    if ok:
+        st.sidebar.caption("✅ " + "、".join(f"{s['source']}({s['count']})" for s in ok))
+
     # 时间范围筛选：复用后端纯函数 filter_news_by_time，兼容缺时间 /
     # 带时区的条目，避免直接用 pandas 对「发布时间」列做 `>=` 比较时
     # 因个别条目非 datetime 而隐性丢数据或抛错（R2 稳健性 + 复用既有能力）。

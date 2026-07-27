@@ -641,15 +641,20 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
 
     collected: List[Dict] = []
     notes: List[str] = []
+    # R1 监控可观测性：逐源记录抓取健康态（成功/失败/条数/错误类型），
+    # 供看板「数据健康态」横幅结构化呈现，而非仅拼进说明文本。
+    src_status: List[Dict] = []
 
     # 1) Hacker News
     try:
         hn = fetch_hacker_news()
         collected.extend(hn)
         notes.append(f"Hacker News {len(hn)} 条")
+        src_status.append({"source": "Hacker News", "ok": True, "count": len(hn), "error": None})
     except Exception as exc:  # 网络/解析失败 -> 提示但不崩溃
         notes.append(f"Hacker News 抓取失败（{type(exc).__name__}），已跳过")
         log.warning("Hacker News 抓取失败：%s", exc)
+        src_status.append({"source": "Hacker News", "ok": False, "count": 0, "error": type(exc).__name__})
 
     # 2) RSS 源
     for name, url in RSS_SOURCES.items():
@@ -657,9 +662,11 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
             items = fetch_rss(name, url)
             collected.extend(items)
             notes.append(f"{name} {len(items)} 条")
+            src_status.append({"source": name, "ok": True, "count": len(items), "error": None})
         except Exception as exc:
             notes.append(f"{name} 抓取失败（{type(exc).__name__}），已跳过")
             log.warning("%s 抓取失败：%s", name, exc)
+            src_status.append({"source": name, "ok": False, "count": 0, "error": type(exc).__name__})
 
     # 3) 兜底：若全部失败则使用 mock
     if not collected:
@@ -675,6 +682,10 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
     collected = sort_news(collected, "desc")
 
     notes_str = "；".join(notes)
+    # R1 记录本次抓取结构化健康态，供看板横幅与 get_news_health() 读取
+    health = summarize_fetch_health(src_status, len(collected), notes_str)
+    global _last_fetch_health
+    _last_fetch_health = health
     # 缓存独立副本，避免后续对返回值的修改反向污染缓存
     _news_cache_set(cache_key, (list(collected), notes_str))
     # R1 统一过滤：来源 + 情绪 + 关键词均在 limit 截断前应用（全新抓取路径）。
@@ -683,6 +694,41 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
         collected = collected[:limit]
     log.info("资讯聚合完成 条数=%d 说明=%s", len(collected), notes_str)
     return list(collected), notes_str
+
+
+# 最近一次资讯抓取的结构化健康态（由 get_news 写入，供看板横幅读取）
+_last_fetch_health: "dict | None" = None
+
+
+def summarize_fetch_health(src_status: List[Dict], total: int, notes_str: str) -> Dict:
+    """把逐源抓取状态归纳为结构化健康态摘要（看板数据健康态横幅用）。
+
+    纯函数、可单测；不触及网络与全局状态。
+    """
+    any_failed = any(not s["ok"] for s in src_status)
+    all_failed = bool(src_status) and all(not s["ok"] for s in src_status)
+    return {
+        "sources": list(src_status),
+        "total": total,
+        "any_failed": any_failed,
+        "all_failed": all_failed,
+        "offline": all_failed,  # 全部失败 -> get_news 回退内置示例（离线模式）
+        "fetched_at": _dt.datetime.now().isoformat(timespec="seconds"),
+        "note": notes_str,
+    }
+
+
+def get_news_health() -> Dict:
+    """返回最近一次资讯抓取的结构化健康态（看板数据健康态横幅用）。
+
+    未抓取过返回全默认安全结构，绝不抛错（避免侧栏渲染崩溃）。
+    """
+    if _last_fetch_health is None:
+        return {
+            "sources": [], "total": 0, "any_failed": False,
+            "all_failed": False, "offline": False, "fetched_at": None, "note": "",
+        }
+    return _last_fetch_health
 
 
 def _filter_by_source(news: List[Dict], source: "str | None") -> List[Dict]:

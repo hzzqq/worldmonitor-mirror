@@ -82,6 +82,55 @@ def test_get_news_returns_list():
     assert all("title" in n and "link" in n for n in news)
 
 
+def test_summarize_fetch_health_all_ok():
+    # R1 数据健康态：全成功 -> 无失败、非离线
+    src = [
+        {"source": "Hacker News", "ok": True, "count": 10, "error": None},
+        {"source": "RSS-A", "ok": True, "count": 3, "error": None},
+    ]
+    h = data_feed.summarize_fetch_health(src, 13, "ok")
+    assert h["total"] == 13
+    assert h["any_failed"] is False
+    assert h["all_failed"] is False
+    assert h["offline"] is False
+    assert len(h["sources"]) == 2
+    assert h["fetched_at"]  # 时间戳已填
+
+
+def test_summarize_fetch_health_all_failed_offline():
+    # R1 数据健康态：全失败 -> offline 真，便于看板显式告警离线模式
+    src = [
+        {"source": "Hacker News", "ok": False, "count": 0, "error": "ConnectError"},
+        {"source": "RSS-A", "ok": False, "count": 0, "error": "Timeout"},
+    ]
+    h = data_feed.summarize_fetch_health(src, 0, "全部失败")
+    assert h["any_failed"] is True
+    assert h["all_failed"] is True
+    assert h["offline"] is True
+
+
+def test_summarize_fetch_health_partial():
+    # 部分失败：any_failed 真，但 all_failed/offline 假
+    src = [
+        {"source": "Hacker News", "ok": True, "count": 5, "error": None},
+        {"source": "RSS-A", "ok": False, "count": 0, "error": "Timeout"},
+    ]
+    h = data_feed.summarize_fetch_health(src, 5, "部分失败")
+    assert h["any_failed"] is True
+    assert h["all_failed"] is False
+    assert h["offline"] is False
+
+
+def test_get_news_health_keys():
+    # get_news_health 始终返回结构完整的安全字典（看板横幅读取不崩）
+    h = data_feed.get_news_health()
+    for k in ("sources", "total", "any_failed", "all_failed", "offline", "fetched_at", "note"):
+        assert k in h
+    # 字段类型稳健
+    assert isinstance(h["sources"], list)
+    assert isinstance(h["any_failed"], bool)
+
+
 def test_dedup_removes_duplicate_links():
     items = [
         {"title": "A", "link": "https://x.com/1"},
