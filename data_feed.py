@@ -364,8 +364,7 @@ def filter_news_by_time(news: List[Dict], hours: "int | float | None" = None) ->
             out.append(n)  # 无时间信息：保守保留
             continue
         try:
-            if getattr(pub, "tzinfo", None) is not None:
-                pub = pub.replace(tzinfo=None)
+            pub = _to_local_naive(pub)
         except Exception:
             pass
         if pub >= cutoff:
@@ -453,7 +452,10 @@ def _parse_feed_time(entry) -> _dt.datetime | None:
         val = getattr(entry, key, None)
         if val:
             try:
-                return _dt.datetime(*val[:6])
+                # feedparser 明确规定 *_parsed 已归一化到 UTC，因此要按 UTC 解读
+                # 再换算到本地时钟；否则同样会出现「资讯凭空变老 8 小时」的错位。
+                utc = _dt.datetime(*val[:6], tzinfo=_dt.timezone.utc)
+                return _to_local_naive(utc)
             except Exception:
                 continue
     raw = getattr(entry, "published", None) or getattr(entry, "updated", None)
@@ -462,12 +464,35 @@ def _parse_feed_time(entry) -> _dt.datetime | None:
     return None
 
 
+def _to_local_naive(pub: _dt.datetime) -> _dt.datetime:
+    """把 datetime 规整为「本地时钟的 naive datetime」。
+
+    整个模块的时间比较基准都是 `_dt.datetime.now()`（本地时钟），所以带时区的
+    时间戳必须先**换算**到本地时区再去掉 tzinfo，而不能直接 `replace(tzinfo=None)`。
+    直接丢弃时区会把 UTC 的墙上时间当成本地时间，在 UTC+8 下让每条资讯凭空
+    「变老」8 小时（详见 _parse_iso 的说明）。naive 输入原样返回。
+    """
+    if getattr(pub, "tzinfo", None) is None:
+        return pub
+    return pub.astimezone().replace(tzinfo=None)
+
+
 def _parse_iso(s: str) -> _dt.datetime | None:
+    """解析 ISO-8601 / RFC-822 时间戳，统一换算为本地时钟的 naive datetime。
+
+    R2 修复（真实时间错位）：旧实现解析出带时区的时间后直接 `replace(tzinfo=None)`
+    丢弃偏移量，等于把 UTC 墙上时间冒充本地时间。HN 的 created_at 与多数 RSS 源
+    都是 UTC，于是在 UTC+8 环境下**每条资讯都被判定为 8 小时前发布**，造成：
+      · 看板「最近 N 小时」筛选把刚发布的资讯整批筛没（N<=8 时结果直接为空）；
+      · 「发布时间分布」直方图整体左移 8 个桶，高峰时段读数错误；
+      · 缺时间的条目回退为本地 now()，反而永远排在真正更新的资讯前面。
+    现改为按真实偏移量换算到本地时区后再去 tzinfo。
+    """
     try:
-        return _dt.datetime.fromisoformat(s.replace("Z", "+00:00")).replace(tzinfo=None)
+        return _to_local_naive(_dt.datetime.fromisoformat(s.replace("Z", "+00:00")))
     except Exception:
         try:
-            return _dt.datetime.strptime(s, "%a, %d %b %Y %H:%M:%S %z").replace(tzinfo=None)
+            return _to_local_naive(_dt.datetime.strptime(s, "%a, %d %b %Y %H:%M:%S %z"))
         except Exception:
             return None
 
@@ -545,8 +570,7 @@ def sort_news(news: List[Dict], order: str = "desc") -> List[Dict]:
         if not isinstance(pub, _dt.datetime):
             return _dt.datetime.min
         try:
-            if getattr(pub, "tzinfo", None) is not None:
-                pub = pub.replace(tzinfo=None)
+            pub = _to_local_naive(pub)
         except Exception:
             return _dt.datetime.min
         return pub
@@ -933,8 +957,7 @@ def news_by_hour(news: List[Dict], window_hours: int = 24) -> List[Tuple[str, in
         if not isinstance(pub, _dt.datetime):
             continue  # 缺时间信息：保守跳过
         try:
-            if getattr(pub, "tzinfo", None) is not None:
-                pub = pub.replace(tzinfo=None)
+            pub = _to_local_naive(pub)
         except Exception:
             continue
         if pub < base:  # 早于窗口起点：忽略

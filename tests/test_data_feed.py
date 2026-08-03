@@ -1015,3 +1015,44 @@ def test_trending_keywords_skips_pure_numeric():
     assert "突破" in kws
     assert "增长" in kws
 
+
+def test_parse_iso_converts_utc_offset_to_local_clock():
+    """R2 回归：带偏移量的时间戳必须换算到本地时钟，而不是丢弃时区。
+
+    HN 的 created_at 与多数 RSS 源都是 UTC。旧实现直接 replace(tzinfo=None)，
+    在 UTC+8 下会把刚发布的资讯判成 8 小时前，使「最近 N 小时」筛选整批筛空。
+    """
+    utc_now = _dt.datetime.now(_dt.timezone.utc)
+    parsed = data_feed._parse_iso(utc_now.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
+    assert parsed is not None
+    # 与本地当前时刻的偏差应在数秒内（而非一个时区偏移量）
+    drift = abs((_dt.datetime.now() - parsed).total_seconds())
+    assert drift < 60, f"解析后与本地当前时刻偏差 {drift}s，时区未正确换算"
+
+    # RFC-822 带偏移量的写法同样要换算
+    rfc = utc_now.strftime("%a, %d %b %Y %H:%M:%S +0000")
+    parsed_rfc = data_feed._parse_iso(rfc)
+    assert parsed_rfc is not None
+    assert abs((_dt.datetime.now() - parsed_rfc).total_seconds()) < 60
+
+
+def test_fresh_utc_news_survives_time_filter_and_lands_in_current_bucket():
+    """R2 回归：刚发布（UTC）的资讯不该被短时间窗口筛掉，也不该落错小时桶。"""
+    utc_now = _dt.datetime.now(_dt.timezone.utc)
+    pub = data_feed._parse_iso(utc_now.strftime("%Y-%m-%dT%H:%M:%S.000Z"))
+    news = [{"title": "fresh", "summary": "", "source": "Hacker News",
+             "link": "", "published": pub}]
+
+    # 最近 1 小时应保留（旧实现下会被判 8 小时前而丢失）
+    assert len(data_feed.filter_news_by_time(news, 1)) == 1
+
+    # 小时分布应落在「当前整点」桶
+    pairs = data_feed.news_by_hour(news, window_hours=24)
+    nonzero = [label for label, c in pairs if c > 0]
+    assert nonzero == [_dt.datetime.now().strftime("%H:00")]
+
+
+def test_to_local_naive_leaves_naive_untouched():
+    """naive datetime 原样返回，不被二次换算（避免重复偏移）。"""
+    naive = _dt.datetime(2026, 1, 2, 3, 4, 5)
+    assert data_feed._to_local_naive(naive) == naive
