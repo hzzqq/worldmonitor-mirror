@@ -342,4 +342,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    from streamlit.web.cli import main as _st_main
+    sys.argv = ["streamlit", "run", __file__, "--server.port", "8501"]
+    _st_main()
