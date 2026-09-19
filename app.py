@@ -21,7 +21,7 @@ import streamlit as st
 
 import data_feed
 import market
-from app_helpers import build_dataframe, highlight_keyword, trending_chart_data, hourly_chart_data, search_and_paginate
+from app_helpers import build_dataframe, highlight_keyword, trending_chart_data, hourly_chart_data, search_and_paginate, filter_by_keyword
 
 
 # ---------------------------------------------------------------------------
@@ -94,9 +94,10 @@ def main() -> None:
     filtered = df.copy()
     if not filtered.empty:
         if keyword:
-            mask = filtered["标题"].str.lower().str.contains(keyword.lower(), na=False)
-            mask |= filtered["情绪"].str.lower().str.contains(keyword.lower(), na=False)
-            filtered = filtered[mask]
+            # R2 崩溃修复：改用 app_helpers.filter_by_keyword（字面量匹配）。
+            # 原 str.contains(keyword) 按正则解析用户输入，输入 c++ / a[b 等
+            # 常规检索词时抛 re.error 导致整页渲染中断。
+            filtered = filter_by_keyword(filtered, keyword)
         if selected_source != "全部":
             filtered = filtered[filtered["来源"] == selected_source]
         # 排序：最新 / 最旧

@@ -160,3 +160,36 @@ def test_hourly_chart_data_shape():
     assert list(df.columns) == ["时段", "条数"]
     assert len(df) == 24
     assert df["条数"].sum() == 2
+
+
+def _kw_df():
+    import pandas as pd
+    return pd.DataFrame({
+        "标题": ["C++ 发布新版本", "AI 大模型评测", "市场波动"],
+        "情绪": ["正面", "中性", "负面"],
+    })
+
+
+def test_filter_by_keyword_literal_not_regex():
+    """R2 崩溃修复验证：关键词含正则元字符（c++ / a[b / (ai)）必须按字面量
+    匹配，而非被 str.contains 当正则解析后抛 re.error 打断整页渲染。"""
+    df = _kw_df()
+    # 修复前：str.contains("c++") 抛 re.error（bad repetition operator）
+    out = ah.filter_by_keyword(df, "c++")
+    assert len(out) == 1 and out.iloc[0]["标题"] == "C++ 发布新版本"
+    out2 = ah.filter_by_keyword(df, "a[b")   # 非法正则，也应安全返回
+    assert len(out2) == 0
+    out3 = ah.filter_by_keyword(df, "(ai)")
+    assert len(out3) == 0
+
+
+def test_filter_by_keyword_case_and_columns_and_empty():
+    """filter_by_keyword：大小写不敏感 / 覆盖 标题+情绪 两列 / 空关键词原样返回。"""
+    df = _kw_df()
+    assert len(ah.filter_by_keyword(df, "C++")) == 1          # 大小写不敏感
+    assert len(ah.filter_by_keyword(df, "负面")) == 1         # 命中情绪列
+    empty = ah.filter_by_keyword(df, "")                      # 空 -> 原样
+    assert len(empty) == len(df)
+    assert len(ah.filter_by_keyword(df, "   ")) == len(df)    # 纯空白 -> 原样
+    # 目标列缺失时安全跳过（不抛 KeyError）
+    assert len(ah.filter_by_keyword(df.drop(columns=["情绪"]), "负面")) == 0

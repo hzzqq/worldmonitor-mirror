@@ -65,6 +65,25 @@ def build_dataframe(items: list) -> "pd.DataFrame":
     return pd.DataFrame(rows)
 
 
+def filter_by_keyword(df: "pd.DataFrame", keyword: str, columns: "tuple[str, ...]" = ("标题", "情绪")) -> "pd.DataFrame":
+    """按关键词过滤 DataFrame（字面量匹配，非正则），返回过滤后的副本。
+
+    R2 崩溃修复：app 原实现直接 `str.contains(keyword)`（默认按正则解析），
+    用户输入 `c++`、`a[b`、`(ai)` 等常规检索词时 pandas 抛 re.error，整页
+    渲染中断（同文件 highlight_keyword 早已做 _re.escape，唯独此处遗漏）。
+    现收敛为纯函数并显式 `regex=False` 字面量子串匹配：大小写不敏感、
+    空/纯空白关键词原样返回、目标列缺失时跳过该列。
+    """
+    kw = (keyword or "").strip().lower()
+    if not kw:
+        return df
+    mask = pd.Series(False, index=df.index)
+    for col in columns:
+        if col in df.columns:
+            mask |= df[col].str.lower().str.contains(kw, regex=False, na=False)
+    return df[mask]
+
+
 def trending_chart_data(items: list, top_k: int = 10) -> "pd.DataFrame":
     """返回热门关键词 DataFrame（词, 次数），供 Plotly 柱状图。
 
