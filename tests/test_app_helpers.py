@@ -9,8 +9,14 @@
 from __future__ import annotations
 
 import datetime as _dt
+import sys
+from pathlib import Path
 
-import app_helpers as ah
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import app_helpers as ah  # noqa: E402
 
 
 def _sample(news=None):
