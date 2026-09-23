@@ -114,22 +114,24 @@ def _get_via_akshare() -> List[Dict]:
             out.append({
                 "名称": str(row.get("名称", "")),
                 "代码": code,
-                "最新价": float(row.get("最新价", 0) or 0),
-                "涨跌幅": float(row.get("涨跌幅", 0) or 0),
-                "涨跌额": float(row.get("涨跌额", 0) or 0),
-                "成交量": float(row.get("成交量", 0) or 0),
-                "成交额": float(row.get("成交额", 0) or 0),
+                # R2 修复（c166）：NaN 是真值、"-" 等脏值会抛错——统一走
+                # _safe_float，停牌/坏行不再污染统计与排序。
+                "最新价": _safe_float(row.get("最新价")),
+                "涨跌幅": _safe_float(row.get("涨跌幅")),
+                "涨跌额": _safe_float(row.get("涨跌额")),
+                "成交量": _safe_float(row.get("成交量")),
+                "成交额": _safe_float(row.get("成交额")),
             })
     if not out:  # 抓到了但没匹配上，退回全部前若干条
         for _, row in df.head(5).iterrows():
             out.append({
                 "名称": str(row.get("名称", "")),
                 "代码": str(row.get("代码", "")),
-                "最新价": float(row.get("最新价", 0) or 0),
-                "涨跌幅": float(row.get("涨跌幅", 0) or 0),
-                "涨跌额": float(row.get("涨跌额", 0) or 0),
-                "成交量": float(row.get("成交量", 0) or 0),
-                "成交额": float(row.get("成交额", 0) or 0),
+                "最新价": _safe_float(row.get("最新价")),
+                "涨跌幅": _safe_float(row.get("涨跌幅")),
+                "涨跌额": _safe_float(row.get("涨跌额")),
+                "成交量": _safe_float(row.get("成交量")),
+                "成交额": _safe_float(row.get("成交额")),
             })
     return out
 
@@ -354,10 +356,56 @@ def _mock_stock(symbol: str) -> Dict:
     }
 
 
+def _safe_float(v, default: float = 0.0) -> float:
+    """R2 修复（c166）：NaN 是真值，`or 0` 拦不住；"-" 等脏值 float 直接抛。
+    统一收口：非数值 / NaN / None 一律回退 default，单个坏行不再把 NaN 记为
+    平盘、显示 +nan% 或令整表回退 mock。"""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    if f != f:  # NaN 判别（NaN != NaN）
+        return default
+    return f
+
+
+def match_stock(df, symbol: str):
+    """按「去前缀代码 -> 名称精确 -> 名称前缀（唯一）」三级在实时行情表中定位个股。
+
+    R2 修复（c166）：akshare stock_zh_a_spot_em 的「代码」列为纯 6 位数字
+    （无 sh/sz/bj 前缀）。原实现对带前缀输入（sh600000/sz000001）拿前缀串
+    整列比对必落空，且名称输入（UI 明示支持）完全没有匹配路径——两者都
+    静默回退 mock 假行情并写入 30s 缓存。现收敛为纯函数便于单测：
+    df 需含「代码」「名称」两列；定位失败返回 None。
+    """
+    s = (symbol or "").strip()
+    if not s or df is None or getattr(df, "empty", True):
+        return None
+    # 1) 去交易所前缀后的纯代码精确匹配（600000 / sh600000 / SZ000001 同视）
+    core = s
+    if len(s) > 2 and s[:2].lower() in ("sh", "sz", "bj"):
+        core = s[2:]
+    code_col = df["代码"].astype(str)
+    row = df[code_col == core]
+    if not row.empty:
+        return row.iloc[0]
+    # 2) 名称精确匹配（如「浦发银行」）
+    name_col = df["名称"].astype(str)
+    row = df[name_col == s]
+    if not row.empty:
+        return row.iloc[0]
+    # 3) 名称前缀匹配：仅唯一命中才采用，避免歧义误配
+    row = df[name_col.str.startswith(s, na=False)]
+    if len(row) == 1:
+        return row.iloc[0]
+    return None
+
+
 def get_stock_quote(symbol: str) -> Tuple[Dict, str]:
     """单只股票行情，akshare 优先，失败回退 mock。
 
-    返回 (个股 dict, 数据来源说明)。symbol 形如 600000 或 sh600000。
+    返回 (个股 dict, 数据来源说明)。symbol 形如 600000、sh600000、sz000001
+    或股票名称（如「浦发银行」，精确或唯一前缀）。
     """
     symbol = (symbol or "").strip()
     if not symbol:
@@ -369,26 +417,23 @@ def get_stock_quote(symbol: str) -> Tuple[Dict, str]:
     try:
         import akshare as ak
 
-        # 优先用沪 A 实时spot，再退化到全市场筛选
         df = ak.stock_zh_a_spot_em()
-        code = symbol if symbol.lower().startswith(("sh", "sz", "bj")) else f"sh{symbol}"
-        row = df[df["代码"] == code]
-        if row.empty and not symbol.lower().startswith(("sh", "sz", "bj")):
-            row = df[df["代码"].str.endswith(symbol)]
-        if not row.empty:
-            r = row.iloc[0]
+        # R2 修复（c166）：三级匹配（去前缀代码/名称精确/名称唯一前缀），
+        # 替换原先「带前缀必落空、名称无匹配路径」的实现（详见 match_stock）。
+        r = match_stock(df, symbol)
+        if r is not None:
             result = {
                 "名称": str(r.get("名称", symbol)),
-                "代码": str(r.get("代码", code)),
-                "最新价": float(r.get("最新价", 0) or 0),
-                "涨跌幅": float(r.get("涨跌幅", 0) or 0),
-                "涨跌额": float(r.get("涨跌额", 0) or 0),
-                "成交量": float(r.get("成交量", 0) or 0),
-                "成交额": float(r.get("成交额", 0) or 0),
-                "今开": float(r.get("今开", 0) or 0),
-                "昨收": float(r.get("昨收", 0) or 0),
-                "最高": float(r.get("最高", 0) or 0),
-                "最低": float(r.get("最低", 0) or 0),
+                "代码": str(r.get("代码", symbol)),
+                "最新价": _safe_float(r.get("最新价")),
+                "涨跌幅": _safe_float(r.get("涨跌幅")),
+                "涨跌额": _safe_float(r.get("涨跌额")),
+                "成交量": _safe_float(r.get("成交量")),
+                "成交额": _safe_float(r.get("成交额")),
+                "今开": _safe_float(r.get("今开")),
+                "昨收": _safe_float(r.get("昨收")),
+                "最高": _safe_float(r.get("最高")),
+                "最低": _safe_float(r.get("最低")),
             }, "数据来源：akshare（东方财富实时行情）"
             _cache_set(cache_key, result)
             return result

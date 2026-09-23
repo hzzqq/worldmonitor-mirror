@@ -295,3 +295,27 @@ def test_export_market_csv_and_json(no_akshare):
     for row in data:
         assert isinstance(row["最新价"], float)
         assert isinstance(row["涨跌幅"], float)
+
+
+def test_match_stock_three_tier_and_safe_float():
+    """R2 修复（c166）：带前缀代码/名称输入的三级匹配（修复前必落空回退
+    mock 假行情）+ NaN/脏值防护。"""
+    import pandas as pd
+
+    df = pd.DataFrame({
+        "代码": ["600000", "000001", "600519"],
+        "名称": ["浦发银行", "平安银行", "贵州茅台"],
+        "最新价": [10.0, float("nan"), "-"],
+    })
+    assert market.match_stock(df, "600000")["名称"] == "浦发银行"      # 纯代码
+    assert market.match_stock(df, "sz000001")["名称"] == "平安银行"    # 带前缀
+    assert market.match_stock(df, "SH600519")["名称"] == "贵州茅台"    # 大写前缀
+    assert market.match_stock(df, "浦发银行")["代码"] == "600000"      # 名称精确
+    assert market.match_stock(df, "贵州")["代码"] == "600519"          # 唯一前缀
+    assert market.match_stock(df, "银行") is None                      # 歧义前缀 -> None
+    assert market.match_stock(df, "999999") is None
+    assert market.match_stock(df, "") is None
+    assert market._safe_float(float("nan")) == 0.0
+    assert market._safe_float("-") == 0.0
+    assert market._safe_float(None) == 0.0
+    assert market._safe_float("3.5") == 3.5

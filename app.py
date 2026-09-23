@@ -279,8 +279,13 @@ def main() -> None:
             show = idf[["名称", "代码", "最新价", "涨跌幅", "涨跌额", "成交额"]].copy()
             show["成交额"] = (show["成交额"] / 1e8).round(2)  # 转亿元
             show = show.rename(columns={"成交额": "成交额(亿)"})
+            # R2 修复（c166）：pandas 2.1 弃用 Styler.applymap、3.0 已移除
+            # （更名 .map）；requirements 对 pandas 无上限，新装环境得 pandas 3.x
+            # 时此处 AttributeError 整页崩溃。现按可用性兼容两种 API。
+            _styler = show.style
+            _apply = getattr(_styler, "map", None) or _styler.applymap
             st.dataframe(
-                show.style.applymap(color_pct, subset=["涨跌幅"]),
+                _apply(color_pct, subset=["涨跌幅"]),
                 use_container_width=True, hide_index=True,
             )
 
