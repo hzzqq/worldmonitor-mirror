@@ -319,3 +319,93 @@ def test_match_stock_three_tier_and_safe_float():
     assert market._safe_float("-") == 0.0
     assert market._safe_float(None) == 0.0
     assert market._safe_float("3.5") == 3.5
+
+
+def _fake_spot_df():
+    import pandas as pd
+    return pd.DataFrame({
+        "代码": ["600000", "000001"],
+        "名称": ["浦发银行", "平安银行"],
+        "最新价": [10.0, 11.0],
+        "涨跌幅": [1.5, -0.5],
+        "涨跌额": [0.15, -0.06],
+        "成交量": [100.0, 200.0],
+        "成交额": [1e8, 2e8],
+        "今开": [9.9, 11.1],
+        "昨收": [9.85, 11.06],
+        "最高": [10.2, 11.2],
+        "最低": [9.8, 10.9],
+    })
+
+
+def test_stock_cache_returns_copy_and_normalized_key(monkeypatch):
+    """R2/R1（c168）：缓存命中返回副本（原地修改不污染）；缓存键去前缀归一
+    （600000 / sh600000 / SZ600000 共享，同股不再重复打上游）。"""
+    import pandas as pd
+    calls = {"n": 0}
+
+    def fake_fetch(retries=1):
+        calls["n"] += 1
+        return _fake_spot_df(), None
+
+    monkeypatch.setattr(market, "_fetch_spot_df", fake_fetch)
+    market.clear_all_caches()
+    q1, src1 = market.get_stock_quote("600000")
+    assert "akshare" in src1 and calls["n"] == 1
+    q1["最新价"] = 999.0                      # 调用方原地修改
+    q2, _ = market.get_stock_quote("sh600000")   # 归一键命中缓存
+    assert q2["最新价"] == 10.0, "缓存命中必须返回副本"
+    q3, _ = market.get_stock_quote("SZ600000")
+    assert q3["最新价"] == 10.0 and calls["n"] == 1, "不同写法共享缓存、不重复抓取"
+    market.clear_all_caches()
+
+
+def test_get_stock_quotes_single_fetch(monkeypatch):
+    """R2 性能修复（c168）：批量查询只抓一次全市场表（原先 N 只=N 次全量 HTTP）。"""
+    calls = {"n": 0}
+
+    def fake_fetch(retries=1):
+        calls["n"] += 1
+        return _fake_spot_df(), None
+
+    monkeypatch.setattr(market, "_fetch_spot_df", fake_fetch)
+    market.clear_all_caches()
+    out = market.get_stock_quotes(["600000", "000001", "sh600000"])
+    assert calls["n"] == 1, "3 只股票（含 1 只缓存等价写法）只应抓取一次"
+    assert out["600000"][0]["名称"] == "浦发银行"
+    assert out["000001"][0]["名称"] == "平安银行"
+    assert out["sh600000"][0]["代码"] == "600000"
+    market.clear_all_caches()
+
+
+def test_stock_quote_retries_on_transient(monkeypatch):
+    """R1 韧性（c168）：spot 接口偶发断连时重试一次（c167 集成冒烟实测上游不稳）。
+    patch akshare 层（而非 _fetch_spot_df），以覆盖其内部重试循环。"""
+    import akshare
+
+    calls = {"n": 0}
+
+    def flaky_spot():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise ConnectionError("Remote end closed connection without response")
+        return _fake_spot_df()
+
+    monkeypatch.setattr(akshare, "stock_zh_a_spot_em", flaky_spot)
+    market.clear_all_caches()
+    q, src = market.get_stock_quote("600000")
+    assert calls["n"] == 2 and "akshare" in src and q["代码"] == "600000"
+    market.clear_all_caches()
+
+
+def test_stock_quote_falls_back_after_retries_exhausted(monkeypatch):
+    """重试耗尽仍失败 -> 明确的「抓取失败」mock 兜底（降级路径保持可用）。"""
+
+    def broken_fetch(retries=1):
+        raise ConnectionError("down")
+
+    monkeypatch.setattr(market, "_fetch_spot_df", broken_fetch)
+    market.clear_all_caches()
+    q, src = market.get_stock_quote("600000")
+    assert "抓取失败" in src and "ConnectionError" in src
+    market.clear_all_caches()

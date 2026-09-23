@@ -158,18 +158,45 @@ def _dedup_key(item: Dict) -> str:
 
 
 def _normalize_link(link) -> str:
-    """把链接规整为去重键：去片段(#)与查询参数(?)，避免同一文章因
+    """把链接规整为去重键：去片段(#)与跟踪类查询参数，避免同一文章因
+    `?utm_source=x` / `#ref` 等跟踪参数被误判为不同链接而漏去重。
 
-    `?utm_source=x` / `#ref` 等跟踪参数被误判为不同链接而漏去重
-    （R2 隐性去重缺陷：原实现直接对原始 link 做 lower，导致
-    `a.com/news` 与 `a.com/news?ref=1` 被视为两篇不同资讯并存）。
+    R2 修复（c168，误并丢条）：原实现无差别剥掉**全部** query 参数——对
+    文章 ID 就在 query 里的源（如 `x.com/read?id=1` 与 `?id=2`），归一后
+    同为 `x.com/read`，_dedup_news 会把第二篇整条静默丢弃。现仅剥离
+    跟踪类参数（utm_*/spm/from/share/...），保留 id 类参数（参数名含 id，
+    如 id/article_id/story_id），其余 query 参数保留参与比对。
     """
     if not link:
         return ""
     s = str(link).strip().lower()
     s = s.split("#", 1)[0]
-    s = s.split("?", 1)[0]
+    if "?" in s:
+        base, _, query = s.partition("?")
+        keep = []
+        for kv in query.split("&"):
+            if not kv:
+                continue
+            name = kv.split("=", 1)[0]
+            # 保留文章标识类参数；纯跟踪参数（utm_* 等）剥离
+            if "id" in name or not name.startswith(("utm_", "spm", "from", "share", "ref")):
+                keep.append(kv)
+        s = base + ("?" + "&".join(sorted(keep)) if keep else "")
+    else:
+        s = s.split("?", 1)[0]
     return s.rstrip("/")
+
+
+def _dedup_all(items: List[Dict], similar_threshold: float = 0.85) -> List[Dict]:
+    """资讯去重统一出口：先精确（链接/标题）再近似（标题相似度）。
+
+    R2 修复（c168，承诺未兑现）：dedup_similar_news（R1 近似去重）此前
+    只有单测在调用，get_news 生产链路从未接线——多源转载改写标题的重复
+    仍并列出现，与 docstring「在精确去重之后调用」的宣称不符。现收敛到
+    本函数并在 get_news 全部路径生效。
+    """
+    out = _dedup_news(items)
+    return dedup_similar_news(out, threshold=similar_threshold)
 
 
 def _dedup_news(items: List[Dict]) -> List[Dict]:
@@ -701,8 +728,9 @@ def get_news(force_refresh: bool = False, limit: "int | None" = None,
         collected.extend(_mock_news()[:5])
         notes.append("已补充部分示例数据以丰富展示")
 
-    # 按时间倒序
-    collected = _dedup_news(collected)
+    # 按时间倒序（R2 c168：精确去重后接近似去重——多源转载改写标题的
+    # 近似重复此前在生产链路从未生效，仅单测调用）
+    collected = _dedup_all(collected)
     collected = sort_news(collected, "desc")
 
     notes_str = "；".join(notes)

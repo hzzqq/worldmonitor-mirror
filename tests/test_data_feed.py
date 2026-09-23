@@ -1056,3 +1056,43 @@ def test_to_local_naive_leaves_naive_untouched():
     """naive datetime 原样返回，不被二次换算（避免重复偏移）。"""
     naive = _dt.datetime(2026, 1, 2, 3, 4, 5)
     assert data_feed._to_local_naive(naive) == naive
+
+
+def test_normalize_link_keeps_id_params():
+    """R2 修复（c168）：归一化只剥跟踪类参数、保留 id 类参数——
+    原实现剥掉全部 query，?id=1 与 ?id=2 被误判同一篇而静默丢条。"""
+    base = "https://x.com/read"
+    assert data_feed._normalize_link(base + "?utm_source=x") == base            # 跟踪参数剥离
+    assert data_feed._normalize_link(base + "?ref=1") == base                   # ref 剥离
+    assert data_feed._normalize_link(base + "?id=1") == base + "?id=1"          # id 保留
+    assert data_feed._normalize_link(base + "?id=1") != data_feed._normalize_link(base + "?id=2")
+    assert data_feed._normalize_link(base + "?article_id=9") == base + "?article_id=9"
+    # 参数顺序不敏感（排序后归一）
+    assert data_feed._normalize_link(base + "?id=2&type=a") == \
+        data_feed._normalize_link(base + "?type=a&id=2")
+
+
+def test_dedup_all_combines_exact_and_similar():
+    """R2 修复（c168）：get_news 生产链路改走 _dedup_all——
+    精确去重（链接/标题）+ 近似去重（标题相似度）统一出口。"""
+    items = [
+        {"title": "AI 大模型发布", "link": "http://a/1?id=1", "source": "S1",
+         "summary": "", "published": "2024-01-01T00:00:00"},
+        {"title": "AI 大模型发布", "link": "http://a/1?id=1&utm_source=t", "source": "S2",
+         "summary": "", "published": "2024-01-01T01:00:00"},            # 精确重复（id 保留后仍同键）
+        {"title": "ai 大模型发布会", "link": "http://b/2", "source": "S3",
+         "summary": "", "published": "2024-01-01T02:00:00"},            # 近似重复（相似度 > 0.85）
+        {"title": "完全不同的新闻标题", "link": "http://c/3", "source": "S4",
+         "summary": "", "published": "2024-01-01T03:00:00"},
+    ]
+    out = data_feed._dedup_all(items)
+    titles = [x["title"] for x in out]
+    assert titles == ["AI 大模型发布", "完全不同的新闻标题"]
+    # 不同 id 的链接不得被误并（c168 修复的核心断言）
+    assert data_feed._dedup_all([
+        {"title": "甲", "link": "http://a/read?id=1"},
+        {"title": "乙", "link": "http://a/read?id=2"},
+    ]) and len(data_feed._dedup_all([
+        {"title": "甲", "link": "http://a/read?id=1"},
+        {"title": "乙", "link": "http://a/read?id=2"},
+    ])) == 2

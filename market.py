@@ -148,6 +148,9 @@ def get_indices(limit: "int | None" = None) -> Tuple[List[Dict], str]:
         # R2 修复：缓存里存的是「抓取时的原始顺序」，若直接返回会丢失排序；
         # 这里在每次命中时也按涨跌幅降序重排，保证缓存命中后依旧「领涨在前」。
         data = sorted(data, key=lambda x: x.get("涨跌幅", 0), reverse=True)
+        # R2 修复（c168）：返回元素副本——调用方原地修改（如 UI 标注）不再
+        # 污染 30s TTL 内的后续请求（sorted 只复制列表、不复制 dict）。
+        data = [dict(x) for x in data]
         if limit is None or limit < 0:
             return data, note
         return data[:limit], note
@@ -401,6 +404,37 @@ def match_stock(df, symbol: str):
     return None
 
 
+def _stock_cache_key(symbol: str) -> str:
+    """个股缓存键归一（R1 c168）：去交易所前缀 + 小写——
+    600000 / sh600000 / SZ600000 共享同一缓存，避免同一股票重复打上游。"""
+    s = (symbol or "").strip().lower()
+    if len(s) > 2 and s[:2] in ("sh", "sz", "bj"):
+        s = s[2:]
+    return f"stock:{s}"
+
+
+def _fetch_spot_df(retries: int = 1):
+    """拉取全市场实时行情表（R1 c168 韧性）：c167 集成冒烟实测上游偶发断连
+    （指数接口通、spot 全表被断），失败时短暂重试一次再放弃。返回 (df|None, err|None)。"""
+    import akshare as ak  # 延迟导入，缺失时不致命
+
+    last = None
+    for _ in range(retries + 1):
+        try:
+            return ak.stock_zh_a_spot_em(), None
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+    return None, last
+
+
+def _stock_fallback(symbol: str, cache_key: str, msg: str) -> "Tuple[Dict, str]":
+    """个股查询兜底：mock 行情 + 来源说明，并写入缓存（含失败结果，避免
+    上游抖动期间高频重打）。"""
+    result = _mock_stock(symbol), msg
+    _cache_set(cache_key, result)
+    return result
+
+
 def get_stock_quote(symbol: str) -> Tuple[Dict, str]:
     """单只股票行情，akshare 优先，失败回退 mock。
 
@@ -410,52 +444,105 @@ def get_stock_quote(symbol: str) -> Tuple[Dict, str]:
     symbol = (symbol or "").strip()
     if not symbol:
         return {}, "未提供股票代码/名称"
-    cache_key = f"stock:{symbol}"
+    cache_key = _stock_cache_key(symbol)
     cached = _cache_get(cache_key)
     if cached is not None:
-        return cached
+        # R2 修复（c168）：返回缓存副本——调用方原地修改（如 UI 标注）不再
+        # 污染 30s TTL 内的后续请求（与 data_feed.get_news 缓存副本语义一致）。
+        return dict(cached[0]), cached[1]
     try:
-        import akshare as ak
-
-        df = ak.stock_zh_a_spot_em()
-        # R2 修复（c166）：三级匹配（去前缀代码/名称精确/名称唯一前缀），
-        # 替换原先「带前缀必落空、名称无匹配路径」的实现（详见 match_stock）。
-        r = match_stock(df, symbol)
-        if r is not None:
-            result = {
-                "名称": str(r.get("名称", symbol)),
-                "代码": str(r.get("代码", symbol)),
-                "最新价": _safe_float(r.get("最新价")),
-                "涨跌幅": _safe_float(r.get("涨跌幅")),
-                "涨跌额": _safe_float(r.get("涨跌额")),
-                "成交量": _safe_float(r.get("成交量")),
-                "成交额": _safe_float(r.get("成交额")),
-                "今开": _safe_float(r.get("今开")),
-                "昨收": _safe_float(r.get("昨收")),
-                "最高": _safe_float(r.get("最高")),
-                "最低": _safe_float(r.get("最低")),
-            }, "数据来源：akshare（东方财富实时行情）"
-            _cache_set(cache_key, result)
-            return result
-    except Exception as exc:
-        result = _mock_stock(symbol), (
-            f"⚠️ 个股行情抓取失败（{type(exc).__name__}），已回退内置示例数据（离线模式）：{symbol}"
+        df, net_err = _fetch_spot_df()
+    except Exception as exc:  # noqa: BLE001  # 兜底（_fetch_spot_df 理论上不抛）
+        df, net_err = None, exc
+    if df is None:
+        return _stock_fallback(
+            symbol, cache_key,
+            f"⚠️ 个股行情抓取失败（{type(net_err).__name__}），已回退内置示例数据（离线模式）：{symbol}",
         )
-        _cache_set(cache_key, result)
-        return result
-    result = _mock_stock(symbol), f"⚠️ 未匹配到个股，已回退内置示例数据（离线模式）：{symbol}"
+    # R2 修复（c166）：三级匹配（去前缀代码/名称精确/名称唯一前缀），
+    # 替换原先「带前缀必落空、名称无匹配路径」的实现（详见 match_stock）。
+    r = match_stock(df, symbol)
+    if r is None:
+        return _stock_fallback(
+            symbol, cache_key,
+            f"⚠️ 未匹配到个股，已回退内置示例数据（离线模式）：{symbol}",
+        )
+    result = {
+        "名称": str(r.get("名称", symbol)),
+        "代码": str(r.get("代码", symbol)),
+        "最新价": _safe_float(r.get("最新价")),
+        "涨跌幅": _safe_float(r.get("涨跌幅")),
+        "涨跌额": _safe_float(r.get("涨跌额")),
+        "成交量": _safe_float(r.get("成交量")),
+        "成交额": _safe_float(r.get("成交额")),
+        "今开": _safe_float(r.get("今开")),
+        "昨收": _safe_float(r.get("昨收")),
+        "最高": _safe_float(r.get("最高")),
+        "最低": _safe_float(r.get("最低")),
+    }, "数据来源：akshare（东方财富实时行情）"
     _cache_set(cache_key, result)
-    return result
+    return dict(result[0]), result[1]
 
 
 def get_stock_quotes(symbols: List[str]) -> Dict[str, Tuple[Dict, str]]:
     """批量查询多只股票行情（自选/看板场景）。
 
-    返回 {symbol: (个股 dict, 数据来源说明)}，逐只复用 get_stock_quote 的缓存与兜底。
+    R2 修复（c168，性能）：原实现逐只调用 get_stock_quote，N 只自选股=N 次
+    全市场全量 HTTP（stock_zh_a_spot_em 拉全表后即弃）。现只抓一次全表、
+    循环 match_stock 定位；命中缓存的个股不打上游；结果照旧写缓存。
+    返回 {symbol: (个股 dict, 数据来源说明)}。
     """
     out: Dict[str, Tuple[Dict, str]] = {}
+    pending: List[str] = []
+    key_of: Dict[str, str] = {}
     for sym in symbols:
-        out[sym] = get_stock_quote(sym)
+        s = (sym or "").strip()
+        if not s:
+            out[sym] = {}, "未提供股票代码/名称"
+            continue
+        ck = _stock_cache_key(s)
+        key_of[sym] = ck
+        cached = _cache_get(ck)
+        if cached is not None:
+            out[sym] = dict(cached[0]), cached[1]
+        else:
+            pending.append(sym)
+    if not pending:
+        return out
+    try:
+        df, net_err = _fetch_spot_df()
+    except Exception as exc:  # noqa: BLE001
+        df, net_err = None, exc
+    for sym in pending:
+        ck = key_of[sym]
+        if df is None:
+            out[sym] = _stock_fallback(
+                sym, ck,
+                f"⚠️ 个股行情抓取失败（{type(net_err).__name__}），已回退内置示例数据（离线模式）：{sym}",
+            )
+            continue
+        r = match_stock(df, sym)
+        if r is None:
+            out[sym] = _stock_fallback(
+                sym, ck,
+                f"⚠️ 未匹配到个股，已回退内置示例数据（离线模式）：{sym}",
+            )
+            continue
+        result = {
+            "名称": str(r.get("名称", sym)),
+            "代码": str(r.get("代码", sym)),
+            "最新价": _safe_float(r.get("最新价")),
+            "涨跌幅": _safe_float(r.get("涨跌幅")),
+            "涨跌额": _safe_float(r.get("涨跌额")),
+            "成交量": _safe_float(r.get("成交量")),
+            "成交额": _safe_float(r.get("成交额")),
+            "今开": _safe_float(r.get("今开")),
+            "昨收": _safe_float(r.get("昨收")),
+            "最高": _safe_float(r.get("最高")),
+            "最低": _safe_float(r.get("最低")),
+        }, "数据来源：akshare（东方财富实时行情）"
+        _cache_set(ck, result)
+        out[sym] = dict(result[0]), result[1]
     return out
 
 
